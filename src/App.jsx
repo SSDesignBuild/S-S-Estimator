@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { appData } from "./data";
 
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
-const storageKey = "sns-design-build-estimator-v6";
+const storageKey = "sns-design-build-estimator-v7";
 
 const qtyLabels = {
   "Per sqft": "SQFT",
@@ -72,7 +72,8 @@ const defaultRenaissance = {
   roofColor: false,
   upgradeFoam: false,
   upgrade032: false,
-  deductPosts: 0
+  deductPosts: 0,
+  supportBeams: 0
 };
 
 const renaissanceSectionOptions = {
@@ -104,10 +105,58 @@ function getRenaissanceKey(section, mount, profile) {
 
 function getRequiredPostCount(width) {
   if (!width) return 0;
-  if (width <= 12) return 2;
-  if (width <= 24) return 3;
-  if (width <= 36) return 4;
+  if (width <= 16) return 2;
+  if (width <= 26) return 3;
+  if (width <= 34) return 4;
   return 5;
+}
+
+const spanTables = {
+  Moderno: { spans: { 8: 19.6, 10: 18.4, 12: 17.4, 14: 16.7, 15: 16.4, 16: 16.1 }, factors: { none: 1.0, hd: 1.15, wide: 1.29, wideInsert: 1.56 } },
+  Contempo: { spans: { 8: 19.6, 10: 18.4, 12: 17.4, 14: 16.9, 15: 16.3, 16: 16.1 }, factors: { none: 1.0, hd: 1.15, wide: 1.29, wideInsert: 1.56 } },
+  Classico: { spans: { 8: 19.4, 10: 18.3, 12: 17.2, 14: 16.5, 15: 16.3, 16: 16.0 }, factors: { none: 1.0, hd: 1.15, wide: 1.29, wideInsert: 1.55 } },
+  Fresco: { spans: { 8: 19.7, 10: 18.6, 12: 17.7, 14: 16.9, 15: 16.6, 16: 16.2 }, factors: { none: 1.0, hd: 1.15, wide: 1.29, wideInsert: 1.56 } },
+  Aria: { spans: { 8: 26.6, 10: 25.1, 12: 23.9, 14: 22.9, 15: 22.4, 16: 22.0 }, factors: { none: 1.0, hd: 1.14, wide: 1.28, wideInsert: 1.54 } }
+};
+
+function getBaseAllowedSpan(section, projection) {
+  const table = spanTables[section];
+  if (!table) return 0;
+  const spans = table.spans;
+  const keys = Object.keys(spans).map(Number).sort((a,b)=>a-b);
+  if (spans[projection]) return spans[projection];
+  if (projection < keys[0]) return spans[keys[0]];
+  if (projection > keys[keys.length - 1]) {
+    const p16 = spans[16];
+    const p15 = spans[15];
+    const step = p15 - p16 || 0.3;
+    return Math.max(8, +(p16 - step * (projection - 16)).toFixed(2));
+  }
+  let lower = keys[0], upper = keys[keys.length - 1];
+  for (let i = 0; i < keys.length - 1; i += 1) {
+    if (projection > keys[i] && projection < keys[i + 1]) {
+      lower = keys[i];
+      upper = keys[i + 1];
+      break;
+    }
+  }
+  const ratio = (projection - lower) / (upper - lower);
+  return +(spans[lower] + (spans[upper] - spans[lower]) * ratio).toFixed(2);
+}
+
+function getAllowedSpan(section, effectiveProjection, upgrade) {
+  const base = getBaseAllowedSpan(section, effectiveProjection);
+  const factor = spanTables[section]?.factors?.[upgrade] || 1;
+  return +(base * factor).toFixed(2);
+}
+
+function getRequiredPostsBySpan(width, allowedSpan) {
+  if (!width || !allowedSpan) return 0;
+  return Math.ceil(width / allowedSpan) + 1;
+}
+
+function getProjectionSegments(projection, supportBeams) {
+  return supportBeams + 1 > 0 ? projection / (supportBeams + 1) : projection;
 }
 
 function getPanelTypeMeta(panelType, upgradeFoam = false, upgrade032 = false) {
@@ -237,9 +286,23 @@ function App() {
     }
   }, [renaissance.section, renaissance.mount, renaissance.profile]);
 
+  useEffect(() => {
+    const effectiveProjection = renaissance.projection ? getProjectionSegments(renaissance.projection, safeNumber(renaissance.supportBeams)) : 0;
+    const validOptions = ["none", "hd", "wide", "wideInsert"].filter((upgradeKey) => {
+      const allowed = getAllowedSpan(renaissance.section, Math.max(8, Math.min(30, effectiveProjection || 8)), upgradeKey);
+      const postCount = safeNumber(renaissance.postCountOverride || getRequiredPostCount(renaissance.width));
+      return !renaissance.width || !postCount || renaissance.width <= allowed * Math.max(postCount - 1, 1);
+    });
+
+    if (validOptions.length && !validOptions.includes(renaissance.beamUpgrade)) {
+      setRenaissance((current) => ({ ...current, beamUpgrade: validOptions[0], postUpgrade: validOptions[0] }));
+    }
+  }, [renaissance.section, renaissance.width, renaissance.projection, renaissance.supportBeams, renaissance.postCountOverride, renaissance.beamUpgrade]);
+
   const activeTier = appData.pricingTiers[selectedTier] || appData.pricingTiers.tier5;
   const selectedPlan = financingPlans.find((plan) => plan.id === selectedPlanId) || financingPlans[0];
   const currentRenaissanceOptions = renaissanceSectionOptions[renaissance.section] || renaissanceSectionOptions.Moderno;
+  const renaissanceStyleKey = renaissance.section;
 
   const lineItems = useMemo(
     () =>
@@ -264,7 +327,13 @@ function App() {
     const base = getBaseProjectionPrice(table, width, projection);
     const tierMultiplier = appData.renaissanceTiers[renaissance.tier]?.multiplier || 1;
     const panelMeta = getPanelTypeMeta(renaissance.panelType, renaissance.upgradeFoam, renaissance.upgrade032);
-    const postCountRequired = getRequiredPostCount(width);
+    const supportBeams = safeNumber(renaissance.supportBeams);
+    const effectiveProjection = projection ? +getProjectionSegments(projection, supportBeams).toFixed(2) : 0;
+    const minSupportBeamsForPanels = projection ? Math.max(0, Math.ceil(projection / panelMeta.maxProjection) - 1) : 0;
+    const allowedMainSpan = getAllowedSpan(renaissance.section, Math.max(8, Math.min(30, effectiveProjection || 8)), renaissance.beamUpgrade);
+    const legendPostCountRequired = getRequiredPostCount(width);
+    const spanPostCountRequired = getRequiredPostsBySpan(width, allowedMainSpan);
+    const postCountRequired = Math.max(legendPostCountRequired, spanPostCountRequired);
     const postCount = safeNumber(renaissance.postCountOverride || postCountRequired);
     const beamLength = width || 0;
     const rsqft = roofSqft(renaissance.mount, width, projection);
@@ -279,10 +348,16 @@ function App() {
     if (panelMeta.includes032 && rsqft) adders.push({ label: ".032 skin upgrade", amount: rsqft * addOns.alum032PerSqft * tierMultiplier });
 
     const postUpgradeAmount = postCount * safeNumber(addOns.postUpgradeEach?.[renaissance.postUpgrade]) * tierMultiplier;
-    if (postUpgradeAmount) adders.push({ label: `Post upgrade (${renaissance.postUpgrade})`, amount: postUpgradeAmount });
+    if (postUpgradeAmount) adders.push({ label: `Front/main post upgrade (${renaissance.postUpgrade})`, amount: postUpgradeAmount });
 
     const beamUpgradeAmount = beamLength * safeNumber(addOns.beamUpgradePerFoot?.[renaissance.beamUpgrade]) * tierMultiplier;
-    if (beamUpgradeAmount) adders.push({ label: `Beam upgrade (${renaissance.beamUpgrade})`, amount: beamUpgradeAmount });
+    if (beamUpgradeAmount) adders.push({ label: `Front/main beam upgrade (${renaissance.beamUpgrade})`, amount: beamUpgradeAmount });
+
+    const supportBeamUpgradeAmount = supportBeams * beamLength * safeNumber(addOns.beamUpgradePerFoot?.[renaissance.beamUpgrade]) * tierMultiplier;
+    if (supportBeamUpgradeAmount) adders.push({ label: `Support beam row upgrade x${supportBeams}`, amount: supportBeamUpgradeAmount });
+
+    const supportPostUpgradeAmount = supportBeams * postCount * safeNumber(addOns.postUpgradeEach?.[renaissance.postUpgrade]) * tierMultiplier;
+    if (supportPostUpgradeAmount) adders.push({ label: `Support post row upgrade x${supportBeams}`, amount: supportPostUpgradeAmount });
 
     const fanBeamAmount = safeNumber(renaissance.fanBeams) * fanBeamUnit * tierMultiplier;
     if (fanBeamAmount) adders.push({ label: `Fan beam(s) @ ${projection}'`, amount: fanBeamAmount });
@@ -291,6 +366,11 @@ function App() {
     if (deductPostAmount) adders.push({ label: "Deduct post(s)", amount: deductPostAmount });
 
     const totalAdders = adders.reduce((sum, item) => sum + item.amount, 0);
+    const maxWidthWithCurrentSetup = allowedMainSpan && postCount > 1 ? +(allowedMainSpan * (postCount - 1)).toFixed(2) : 0;
+    const validUpgradeOptions = ["none", "hd", "wide", "wideInsert"].filter((upgradeKey) => {
+      const span = getAllowedSpan(renaissance.section, Math.max(8, Math.min(30, effectiveProjection || 8)), upgradeKey);
+      return !width || !postCount || width <= span * Math.max(postCount - 1, 1);
+    });
 
     return {
       key,
@@ -303,12 +383,21 @@ function App() {
       tierMultiplier,
       fanBeamUnit,
       postCountRequired,
+      legendPostCountRequired,
+      spanPostCountRequired,
       postCount,
+      supportBeams,
+      minSupportBeamsForPanels,
+      effectiveProjection,
+      allowedMainSpan,
+      maxWidthWithCurrentSetup,
+      validUpgradeOptions,
       adders,
       baseTiered,
       total: baseTiered + totalAdders,
       missingBasePrice: !!(width && projection && !base),
-      usesProjectedMath: projection > 16 && !!base
+      usesProjectedMath: projection > 16 && !!base,
+      spanTableDriven: !!(width && projection)
     };
   }, [renaissance]);
 
@@ -324,7 +413,7 @@ function App() {
   const totalNoFinancing = subtotal + salesTax + permittingFee;
   const depositAmount = Math.min(Math.max(safeNumber(settings.depositAmount), 0), totalNoFinancing);
   const financedBase = Math.max(totalNoFinancing - depositAmount, 0);
-  const financedSaleAmount = financedBase * (1 + selectedPlan.merchantFee / 100);
+  const financedSaleAmount = financedBase * (1 + appData.defaultSettings.financingMarkup);
   const monthlyPayment = financedSaleAmount * (selectedPlan.paymentFactor / 100);
 
   const flags = useMemo(() => {
@@ -376,8 +465,12 @@ function App() {
       if (renaissanceCalc.missingBasePrice) issues.push("That Renaissance width/projection combination is not available from the current table logic.");
       if (renaissanceCalc.usesProjectedMath) issues.push("Renaissance base price for projections over 16' is extrapolated from the sheet's current projection pattern.");
       if (renaissanceCalc.projection > renaissanceCalc.panelMeta.maxProjection) issues.push(`${renaissanceCalc.panelMeta.label} cannot be used over ${renaissanceCalc.panelMeta.maxProjection}' projection.`);
-      if (renaissanceCalc.postCount < renaissanceCalc.postCountRequired) issues.push(`This cover width requires at least ${renaissanceCalc.postCountRequired} posts based on the color-coded Renaissance sheet.`);
+      if (renaissanceCalc.postCount < renaissanceCalc.postCountRequired) issues.push(`This cover width requires at least ${renaissanceCalc.postCountRequired} posts with the selected beam upgrade and span-table logic.`);
       if (safeNumber(renaissance.fanBeams) > 0 && renaissanceCalc.projection < 11) issues.push("Fan beam pricing starts at 11' projection.");
+      if (renaissanceCalc.supportBeams < renaissanceCalc.minSupportBeamsForPanels) issues.push(`Projection ${renaissanceCalc.projection}' needs at least ${renaissanceCalc.minSupportBeamsForPanels} added support beam/post row(s) with ${renaissanceCalc.panelMeta.label}, or switch to a deeper panel setup.`);
+      if (renaissanceCalc.maxWidthWithCurrentSetup && renaissanceCalc.width > renaissanceCalc.maxWidthWithCurrentSetup) issues.push(`Current front/main beam setup only supports about ${renaissanceCalc.maxWidthWithCurrentSetup}' of width. Add posts and/or upgrade beam/post size.`);
+      if (!renaissanceCalc.validUpgradeOptions.includes(renaissance.beamUpgrade)) issues.push("Selected Renaissance beam/post upgrade is under-spanned for this width/projection. Choose a stronger upgrade or more posts.");
+      if (renaissanceCalc.supportBeams > 0) issues.push("Support beam/post rows currently enforce structure logic and upgrade pricing only. Verify any additional base structure charge manually if your final sell sheet requires it.");
     }
 
     return Array.from(new Set(issues));
@@ -404,7 +497,7 @@ function App() {
       "S&S Design Build Quick Quote",
       `Sales Sheet Tier: ${activeTier.label}`,
       ...activeItems.map((item) => `${item.category} | ${item.name} | Qty ${item.qty} | ${currency.format(item.extended)}`),
-      renaissanceCalc.total > 0 ? `Renaissance | ${renaissanceCalc.key} | ${renaissanceCalc.width}x${renaissanceCalc.projection} | ${currency.format(renaissanceCalc.total)}` : null,
+      renaissanceCalc.total > 0 ? `Renaissance | ${renaissanceCalc.key} | ${renaissanceCalc.width}x${renaissanceCalc.projection} | Support rows ${renaissanceCalc.supportBeams} | ${currency.format(renaissanceCalc.total)}` : null,
       `Subtotal: ${currency.format(subtotal)}`,
       `Sales tax: ${currency.format(salesTax)}`,
       `Permitting + location fees: ${currency.format(permittingFee)}`,
@@ -490,7 +583,7 @@ function App() {
           <div className="section-head">
             <div>
               <h2>Standard pricing sheet</h2>
-              <p className="small-note">Tap a category, enter only the quantity, and the total updates instantly.</p>
+              <p className="small-note">Fast fill layout for on-the-spot quoting.</p>
             </div>
             <div className="toolbar-buttons inline-actions">
               <button className="ghost-btn" onClick={clearAll}>Clear inputs</button>
@@ -543,7 +636,7 @@ function App() {
         <aside className="summary-column">
           <section className="card renaissance-card">
             <div className="section-head compact-head">
-              <div><h2>Renaissance</h2></div>
+              <div><h2>Renaissance</h2><p className="small-note">Span checks use the uploaded 110 mph / Exposure B tables with Table 1A upgrade factors.</p></div>
               <button className="ghost-btn" onClick={() => setRenaissanceOpen((value) => !value)}>{renaissanceOpen ? "Hide" : "Show"}</button>
             </div>
 
@@ -641,12 +734,17 @@ function App() {
                     </select>
                   </label>
                   <label>
-                    Beam upgrade
-                    <select value={renaissance.beamUpgrade} onChange={(e) => setRenaissance((current) => ({ ...current, beamUpgrade: e.target.value }))}>
-                      <option value="none">Standard</option>
-                      <option value="hd">HD</option>
-                      <option value="wide">Wide</option>
-                      <option value="wideInsert">Wide + Insert</option>
+                    Beam / post upgrade
+                    <select value={renaissance.beamUpgrade} onChange={(e) => setRenaissance((current) => ({ ...current, beamUpgrade: e.target.value, postUpgrade: e.target.value }))}>
+                      {[["none", "Standard"], ["hd", "HD"], ["wide", "Wide"], ["wideInsert", "Wide + Insert"]].map(([value, label]) => (
+                        <option key={value} value={value} disabled={!renaissanceCalc.validUpgradeOptions.includes(value)}>{label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Added support beam/post rows
+                    <select value={renaissance.supportBeams} onChange={(e) => setRenaissance((current) => ({ ...current, supportBeams: safeNumber(e.target.value) }))}>
+                      {[0, 1, 2, 3].map((value) => <option key={value} value={value}>{value}</option>)}
                     </select>
                   </label>
                   <label>
@@ -661,7 +759,11 @@ function App() {
 
                 <div className="renaissance-summary">
                   <div className="summary-row"><span>Style</span><strong>{renaissanceCalc.key}</strong></div>
-                  <div className="summary-row"><span>Required posts by sheet</span><strong>{renaissanceCalc.postCountRequired || 0}</strong></div>
+                  <div className="summary-row"><span>Required posts</span><strong>{renaissanceCalc.postCountRequired || 0}</strong></div>
+                  <div className="summary-row"><span>Support beam/post rows</span><strong>{renaissanceCalc.supportBeams || 0}</strong></div>
+                  <div className="summary-row"><span>Effective projection per span</span><strong>{renaissanceCalc.effectiveProjection ? `${renaissanceCalc.effectiveProjection.toFixed(2)}'` : "0'"}</strong></div>
+                  <div className="summary-row"><span>Allowed beam span now</span><strong>{renaissanceCalc.allowedMainSpan ? `${renaissanceCalc.allowedMainSpan.toFixed(2)}'` : "0'"}</strong></div>
+                  <div className="summary-row"><span>Max width with current setup</span><strong>{renaissanceCalc.maxWidthWithCurrentSetup ? `${renaissanceCalc.maxWidthWithCurrentSetup.toFixed(2)}'` : "0'"}</strong></div>
                   <div className="summary-row"><span>Roof sqft</span><strong>{renaissanceCalc.rsqft || 0}</strong></div>
                   <div className="summary-row"><span>Base price</span><strong>{currency.format(renaissanceCalc.baseTiered)}</strong></div>
                   {renaissanceCalc.adders.map((adder) => <div className="summary-row" key={adder.label}><span>{adder.label}</span><strong>{currency.format(adder.amount)}</strong></div>)}
@@ -698,7 +800,7 @@ function App() {
               <div className="selected-plan-card">
                 <strong>{selectedPlan.label}</strong>
                 <span>{selectedPlan.term} · {selectedPlan.apr}</span>
-                <span>Merchant fee {selectedPlan.merchantFee}% · Payment factor {selectedPlan.paymentFactor}%</span>
+                <span>S&amp;S financing markup stays fixed at 10% · Payment factor {selectedPlan.paymentFactor}%</span>
               </div>
               {financingOpen && (
                 <div className="plan-list compact-plan-list">
@@ -721,6 +823,7 @@ function App() {
                 </div>
               )}
               <div className="summary-row"><span>Amount being financed</span><strong>{currency.format(financedBase)}</strong></div>
+              <div className="summary-row"><span>Fixed finance markup (10%)</span><strong>{currency.format(financedSaleAmount - financedBase)}</strong></div>
               <div className="summary-row"><span>Financed sale amount</span><strong>{currency.format(financedSaleAmount)}</strong></div>
               <div className="summary-row accent"><span>{selectedPlan.label}</span><strong>{currency.format(monthlyPayment)}/mo</strong></div>
               {selectedPlan.details ? <p className="small-note">{selectedPlan.details}</p> : null}
