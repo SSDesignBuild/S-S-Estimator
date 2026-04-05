@@ -505,7 +505,7 @@ function App() {
       usesProjectedMath: projection > 16 && !!base,
       spanTableDriven: !!(width && projection)
     };
-  }, [renaissance]);
+  }, [renaissance, activeTier.multiplier]);
 
   const standardSubtotal = useMemo(() => lineItems.reduce((sum, item) => sum + item.extended, 0), [lineItems]);
   const subtotal = standardSubtotal + renaissanceCalc.total;
