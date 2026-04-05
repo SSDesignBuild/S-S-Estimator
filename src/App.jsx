@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { appData } from "./data";
 
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
-const storageKey = "sns-design-build-estimator-v7";
+const storageKey = "sns-design-build-estimator-v8";
 
 const qtyLabels = {
   "Per sqft": "SQFT",
@@ -60,7 +60,6 @@ const defaultRenaissance = {
   section: "Moderno",
   mount: "Attached",
   profile: "Straight",
-  tier: "r40",
   width: 0,
   projection: 0,
   panelType: "3standard",
@@ -73,7 +72,9 @@ const defaultRenaissance = {
   upgradeFoam: false,
   upgrade032: false,
   deductPosts: 0,
-  supportBeams: 0
+  supportBeams: 0,
+  windSpeed: 110,
+  exposure: "B"
 };
 
 const renaissanceSectionOptions = {
@@ -89,6 +90,7 @@ const defaultSettings = {
   taxablePortion: 0.4,
   permittingFee: 500,
   city: "",
+  county: "",
   depositAmount: "",
   darkMode: false
 };
@@ -111,18 +113,101 @@ function getRequiredPostCount(width) {
   return 5;
 }
 
+const windSpeedOptions = [110, 120, 130, 140, 150, 160, 156, 165, 170, 175, 180, 186];
+const exposureOptions = ["B", "C", "D"];
+
 const spanTables = {
-  Moderno: { spans: { 8: 19.6, 10: 18.4, 12: 17.4, 14: 16.7, 15: 16.4, 16: 16.1 }, factors: { none: 1.0, hd: 1.15, wide: 1.29, wideInsert: 1.56 } },
-  Contempo: { spans: { 8: 19.6, 10: 18.4, 12: 17.4, 14: 16.9, 15: 16.3, 16: 16.1 }, factors: { none: 1.0, hd: 1.15, wide: 1.29, wideInsert: 1.56 } },
-  Classico: { spans: { 8: 19.4, 10: 18.3, 12: 17.2, 14: 16.5, 15: 16.3, 16: 16.0 }, factors: { none: 1.0, hd: 1.15, wide: 1.29, wideInsert: 1.55 } },
-  Fresco: { spans: { 8: 19.7, 10: 18.6, 12: 17.7, 14: 16.9, 15: 16.6, 16: 16.2 }, factors: { none: 1.0, hd: 1.15, wide: 1.29, wideInsert: 1.56 } },
-  Aria: { spans: { 8: 26.6, 10: 25.1, 12: 23.9, 14: 22.9, 15: 22.4, 16: 22.0 }, factors: { none: 1.0, hd: 1.14, wide: 1.28, wideInsert: 1.54 } }
+  Moderno: {
+    windSpans: {
+      110: { 8: 19.6, 10: 18.4, 12: 17.4, 14: 16.7, 15: 16.4, 16: 16.1 },
+      120: { 8: 19.2, 10: 18.1, 12: 17.1, 14: 16.3, 15: 16.1, 16: 15.8 },
+      130: { 8: 18.9, 10: 17.8, 12: 16.8, 14: 16.0, 15: 15.8, 16: 15.5 },
+      140: { 8: 18.5, 10: 17.5, 12: 16.5, 14: 15.8, 15: 15.6, 16: 15.3 },
+      150: { 8: 18.3, 10: 17.3, 12: 16.3, 14: 15.6, 15: 15.4, 16: 15.1 },
+      160: { 8: 17.9, 10: 16.9, 12: 16.0, 14: 15.3, 15: 15.1, 16: 14.8 },
+      156: { 8: 17.9, 10: 16.9, 12: 16.0, 14: 15.3, 15: 15.1, 16: 14.8 },
+      165: { 8: 17.8, 10: 16.7, 12: 15.8, 14: 15.2, 15: 14.9, 16: 14.6 },
+      170: { 8: 17.6, 10: 16.5, 12: 15.7, 14: 15.0, 15: 14.7, 16: 14.5 },
+      175: { 8: 17.4, 10: 16.3, 12: 15.5, 14: 14.8, 15: 14.5, 16: 14.3 },
+      180: { 8: 17.3, 10: 16.2, 12: 15.4, 14: 14.7, 15: 14.4, 16: 14.2 },
+      186: { 8: 17.0, 10: 15.9, 12: 15.1, 14: 14.4, 15: 14.2, 16: 13.9 }
+    },
+    exposureFactors: { none: { B: 1.0, C: 0.97, D: 0.93 }, hd: { B: 1.15, C: 1.11, D: 1.07 }, wide: { B: 1.29, C: 1.25, D: 1.20 }, wideInsert: { B: 1.56, C: 1.51, D: 1.45 } }
+  },
+  Contempo: {
+    windSpans: {
+      110: { 8: 19.6, 10: 18.4, 12: 17.4, 14: 16.9, 15: 16.3, 16: 16.1 },
+      120: { 8: 19.2, 10: 18.1, 12: 17.1, 14: 16.3, 15: 16.1, 16: 15.8 },
+      130: { 8: 18.9, 10: 17.8, 12: 16.8, 14: 16.0, 15: 15.8, 16: 15.5 },
+      140: { 8: 18.5, 10: 17.4, 12: 16.5, 14: 15.8, 15: 15.6, 16: 15.2 },
+      150: { 8: 18.3, 10: 17.3, 12: 16.3, 14: 15.6, 15: 15.4, 16: 15.1 },
+      160: { 8: 17.9, 10: 16.9, 12: 16.0, 14: 15.3, 15: 15.1, 16: 14.8 },
+      156: { 8: 17.9, 10: 16.9, 12: 16.0, 14: 15.4, 15: 15.0, 16: 14.8 },
+      165: { 8: 17.8, 10: 16.7, 12: 15.8, 14: 15.2, 15: 14.9, 16: 14.6 },
+      170: { 8: 17.6, 10: 16.5, 12: 15.7, 14: 15.1, 15: 14.7, 16: 14.5 },
+      175: { 8: 17.4, 10: 16.3, 12: 15.5, 14: 14.8, 15: 14.5, 16: 14.3 },
+      180: { 8: 17.3, 10: 16.2, 12: 15.4, 14: 14.7, 15: 14.4, 16: 14.2 },
+      186: { 8: 17.0, 10: 15.9, 12: 15.1, 14: 14.4, 15: 14.2, 16: 13.9 }
+    },
+    exposureFactors: { none: { B: 1.0, C: 0.96, D: 0.93 }, hd: { B: 1.15, C: 1.11, D: 1.07 }, wide: { B: 1.29, C: 1.25, D: 1.20 }, wideInsert: { B: 1.56, C: 1.51, D: 1.45 } }
+  },
+  Classico: {
+    windSpans: {
+      110: { 8: 19.4, 10: 18.3, 12: 17.2, 14: 16.5, 15: 16.3, 16: 16.0 },
+      120: { 8: 19.0, 10: 17.9, 12: 16.9, 14: 16.2, 15: 16.0, 16: 15.7 },
+      130: { 8: 18.7, 10: 17.6, 12: 16.6, 14: 15.9, 15: 15.7, 16: 15.4 },
+      140: { 8: 18.4, 10: 17.3, 12: 16.4, 14: 15.7, 15: 15.4, 16: 15.1 },
+      150: { 8: 18.2, 10: 17.1, 12: 16.2, 14: 15.5, 15: 15.3, 16: 15.0 },
+      160: { 8: 17.8, 10: 16.8, 12: 15.9, 14: 15.2, 15: 14.9, 16: 14.7 },
+      156: { 8: 17.8, 10: 16.8, 12: 15.9, 14: 15.3, 15: 14.9, 16: 14.7 },
+      165: { 8: 17.6, 10: 16.6, 12: 15.7, 14: 15.1, 15: 14.8, 16: 14.5 },
+      170: { 8: 17.5, 10: 16.4, 12: 15.6, 14: 14.9, 15: 14.6, 16: 14.4 },
+      175: { 8: 17.3, 10: 16.2, 12: 15.4, 14: 14.7, 15: 14.5, 16: 14.2 },
+      180: { 8: 17.2, 10: 16.1, 12: 15.3, 14: 14.6, 15: 14.3, 16: 14.1 },
+      186: { 8: 16.9, 10: 15.8, 12: 15.0, 14: 14.4, 15: 14.1, 16: 13.9 }
+    },
+    exposureFactors: { none: { B: 1.0, C: 0.97, D: 0.94 }, hd: { B: 1.15, C: 1.11, D: 1.07 }, wide: { B: 1.29, C: 1.26, D: 1.21 }, wideInsert: { B: 1.55, C: 1.51, D: 1.45 } }
+  },
+  Fresco: {
+    windSpans: {
+      110: { 8: 19.7, 10: 18.6, 12: 17.7, 14: 16.9, 15: 16.6, 16: 16.2 },
+      120: { 8: 19.3, 10: 18.2, 12: 17.3, 14: 16.6, 15: 16.2, 16: 15.9 },
+      130: { 8: 19.0, 10: 17.9, 12: 17.0, 14: 16.3, 15: 15.9, 16: 15.66 },
+      140: { 8: 18.6, 10: 17.6, 12: 16.7, 14: 16.0, 15: 15.6, 16: 15.4 },
+      150: { 8: 18.4, 10: 17.4, 12: 16.5, 14: 15.8, 15: 15.5, 16: 15.2 },
+      160: { 8: 18.0, 10: 17.0, 12: 16.1, 14: 15.4, 15: 15.1, 16: 14.9 },
+      156: { 8: 18.0, 10: 17.0, 12: 16.1, 14: 15.4, 15: 15.1, 16: 14.9 },
+      165: { 8: 17.9, 10: 16.8, 12: 16.0, 14: 15.3, 15: 15.0, 16: 14.7 },
+      170: { 8: 17.7, 10: 16.7, 12: 15.8, 14: 15.1, 15: 14.8, 16: 14.6 },
+      175: { 8: 17.5, 10: 16.5, 12: 15.7, 14: 15.0, 15: 14.7, 16: 14.4 },
+      180: { 8: 17.4, 10: 16.3, 12: 15.5, 14: 14.8, 15: 14.6, 16: 14.3 },
+      186: { 8: 17.0, 10: 16.0, 12: 15.2, 14: 14.6, 15: 14.3, 16: 14.0 }
+    },
+    exposureFactors: { none: { B: 1.0, C: 0.97, D: 0.93 }, hd: { B: 1.15, C: 1.11, D: 1.07 }, wide: { B: 1.29, C: 1.26, D: 1.21 }, wideInsert: { B: 1.56, C: 1.51, D: 1.45 } }
+  },
+  Aria: {
+    windSpans: {
+      110: { 8: 26.6, 10: 25.1, 12: 23.9, 14: 22.9, 15: 22.4, 16: 22.0 },
+      120: { 8: 26.2, 10: 24.7, 12: 23.5, 14: 22.5, 15: 22.1, 16: 21.7 },
+      130: { 8: 25.8, 10: 24.3, 12: 23.1, 14: 22.2, 15: 21.7, 16: 21.3 },
+      140: { 8: 25.4, 10: 24.0, 12: 22.8, 14: 21.8, 15: 21.4, 16: 21.0 },
+      150: { 8: 25.2, 10: 23.7, 12: 22.6, 14: 21.6, 15: 21.2, 16: 20.8 },
+      160: { 8: 24.7, 10: 23.3, 12: 22.2, 14: 21.2, 15: 20.8, 16: 20.4 },
+      156: { 8: 24.7, 10: 23.3, 12: 22.2, 14: 21.2, 15: 20.8, 16: 20.4 },
+      165: { 8: 24.5, 10: 23.1, 12: 22.0, 14: 21.0, 15: 20.6, 16: 20.2 },
+      170: { 8: 24.3, 10: 22.9, 12: 21.8, 14: 20.8, 15: 20.4, 16: 20.1 },
+      175: { 8: 24.1, 10: 22.7, 12: 21.6, 14: 20.7, 15: 20.3, 16: 19.9 },
+      180: { 8: 23.9, 10: 22.5, 12: 21.4, 14: 20.5, 15: 20.1, 16: 19.7 },
+      186: { 8: 23.5, 10: 22.2, 12: 21.1, 14: 20.2, 15: 19.8, 16: 19.4 }
+    },
+    exposureFactors: { none: { B: 1.0, C: 0.97, D: 0.93 }, hd: { B: 1.14, C: 1.11, D: 1.07 }, wide: { B: 1.28, C: 1.25, D: 1.21 }, wideInsert: { B: 1.54, C: 1.50, D: 1.45 } }
+  }
 };
 
-function getBaseAllowedSpan(section, projection) {
+function getBaseAllowedSpan(section, projection, windSpeed = 110) {
   const table = spanTables[section];
   if (!table) return 0;
-  const spans = table.spans;
+  const spans = table.windSpans?.[windSpeed] || table.windSpans?.[110] || {};
   const keys = Object.keys(spans).map(Number).sort((a,b)=>a-b);
   if (spans[projection]) return spans[projection];
   if (projection < keys[0]) return spans[keys[0]];
@@ -144,9 +229,9 @@ function getBaseAllowedSpan(section, projection) {
   return +(spans[lower] + (spans[upper] - spans[lower]) * ratio).toFixed(2);
 }
 
-function getAllowedSpan(section, effectiveProjection, upgrade) {
-  const base = getBaseAllowedSpan(section, effectiveProjection);
-  const factor = spanTables[section]?.factors?.[upgrade] || 1;
+function getAllowedSpan(section, effectiveProjection, upgrade, windSpeed = 110, exposure = "B") {
+  const base = getBaseAllowedSpan(section, effectiveProjection, windSpeed);
+  const factor = spanTables[section]?.exposureFactors?.[upgrade]?.[exposure] || 1;
   return +(base * factor).toFixed(2);
 }
 
@@ -219,7 +304,10 @@ function getBaseProjectionPrice(table, width, projection) {
 function getFanBeamUnit(addOns, projection) {
   const mapped = safeNumber(addOns.fanBeamByProjection?.[String(projection)]);
   if (mapped) return mapped;
-  if (projection < 11) return 0;
+  const p11 = safeNumber(addOns.fanBeamByProjection?.["11"]);
+  const p12 = safeNumber(addOns.fanBeamByProjection?.["12"]);
+  if (projection === 10 && p11 && p12) return Math.round(p11 - (p12 - p11));
+  if (projection < 10) return 0;
   const p18 = safeNumber(addOns.fanBeamByProjection?.["18"]);
   const p17 = safeNumber(addOns.fanBeamByProjection?.["17"]);
   const step = p18 && p17 ? p18 - p17 : 25;
@@ -249,7 +337,7 @@ function App() {
       if (parsed.lineQtys && typeof parsed.lineQtys === "object") setLineQtys({ ...defaultLineState, ...parsed.lineQtys });
       if (parsed.settings && typeof parsed.settings === "object") setSettings({ ...defaultSettings, ...parsed.settings });
       if (parsed.selectedPlanId && financingPlans.some((plan) => plan.id === parsed.selectedPlanId)) setSelectedPlanId(parsed.selectedPlanId);
-      if (parsed.renaissance && typeof parsed.renaissance === "object") setRenaissance({ ...defaultRenaissance, ...parsed.renaissance });
+      if (parsed.renaissance && typeof parsed.renaissance === "object") setRenaissance({ ...defaultRenaissance, ...parsed.renaissance, tier: undefined });
       if (parsed.expanded && typeof parsed.expanded === "object") setExpanded({ ...defaultExpanded, ...parsed.expanded });
       if (typeof parsed.toolbarOpen === "boolean") setToolbarOpen(parsed.toolbarOpen);
       if (typeof parsed.renaissanceOpen === "boolean") setRenaissanceOpen(parsed.renaissanceOpen);
@@ -289,7 +377,7 @@ function App() {
   useEffect(() => {
     const effectiveProjection = renaissance.projection ? getProjectionSegments(renaissance.projection, safeNumber(renaissance.supportBeams)) : 0;
     const validOptions = ["none", "hd", "wide", "wideInsert"].filter((upgradeKey) => {
-      const allowed = getAllowedSpan(renaissance.section, Math.max(8, Math.min(30, effectiveProjection || 8)), upgradeKey);
+      const allowed = getAllowedSpan(renaissance.section, Math.max(8, Math.min(30, effectiveProjection || 8)), upgradeKey, renaissance.windSpeed, renaissance.exposure);
       const postCount = safeNumber(renaissance.postCountOverride || getRequiredPostCount(renaissance.width));
       return !renaissance.width || !postCount || renaissance.width <= allowed * Math.max(postCount - 1, 1);
     });
@@ -297,7 +385,7 @@ function App() {
     if (validOptions.length && !validOptions.includes(renaissance.beamUpgrade)) {
       setRenaissance((current) => ({ ...current, beamUpgrade: validOptions[0], postUpgrade: validOptions[0] }));
     }
-  }, [renaissance.section, renaissance.width, renaissance.projection, renaissance.supportBeams, renaissance.postCountOverride, renaissance.beamUpgrade]);
+  }, [renaissance.section, renaissance.width, renaissance.projection, renaissance.supportBeams, renaissance.postCountOverride, renaissance.beamUpgrade, renaissance.windSpeed, renaissance.exposure]);
 
   const activeTier = appData.pricingTiers[selectedTier] || appData.pricingTiers.tier5;
   const selectedPlan = financingPlans.find((plan) => plan.id === selectedPlanId) || financingPlans[0];
@@ -325,12 +413,12 @@ function App() {
     const width = safeNumber(renaissance.width);
     const projection = safeNumber(renaissance.projection);
     const base = getBaseProjectionPrice(table, width, projection);
-    const tierMultiplier = appData.renaissanceTiers[renaissance.tier]?.multiplier || 1;
+    const tierMultiplier = activeTier.multiplier;
     const panelMeta = getPanelTypeMeta(renaissance.panelType, renaissance.upgradeFoam, renaissance.upgrade032);
     const supportBeams = safeNumber(renaissance.supportBeams);
     const effectiveProjection = projection ? +getProjectionSegments(projection, supportBeams).toFixed(2) : 0;
     const minSupportBeamsForPanels = projection ? Math.max(0, Math.ceil(projection / panelMeta.maxProjection) - 1) : 0;
-    const allowedMainSpan = getAllowedSpan(renaissance.section, Math.max(8, Math.min(30, effectiveProjection || 8)), renaissance.beamUpgrade);
+    const allowedMainSpan = getAllowedSpan(renaissance.section, Math.max(8, Math.min(30, effectiveProjection || 8)), renaissance.beamUpgrade, renaissance.windSpeed, renaissance.exposure);
     const legendPostCountRequired = getRequiredPostCount(width);
     const spanPostCountRequired = getRequiredPostsBySpan(width, allowedMainSpan);
     const postCountRequired = Math.max(legendPostCountRequired, spanPostCountRequired);
@@ -368,7 +456,7 @@ function App() {
     const totalAdders = adders.reduce((sum, item) => sum + item.amount, 0);
     const maxWidthWithCurrentSetup = allowedMainSpan && postCount > 1 ? +(allowedMainSpan * (postCount - 1)).toFixed(2) : 0;
     const validUpgradeOptions = ["none", "hd", "wide", "wideInsert"].filter((upgradeKey) => {
-      const span = getAllowedSpan(renaissance.section, Math.max(8, Math.min(30, effectiveProjection || 8)), upgradeKey);
+      const span = getAllowedSpan(renaissance.section, Math.max(8, Math.min(30, effectiveProjection || 8)), upgradeKey, renaissance.windSpeed, renaissance.exposure);
       return !width || !postCount || width <= span * Math.max(postCount - 1, 1);
     });
 
@@ -394,6 +482,8 @@ function App() {
       validUpgradeOptions,
       adders,
       baseTiered,
+      windSpeed: renaissance.windSpeed,
+      exposure: renaissance.exposure,
       total: baseTiered + totalAdders,
       missingBasePrice: !!(width && projection && !base),
       usesProjectedMath: projection > 16 && !!base,
@@ -404,17 +494,19 @@ function App() {
   const standardSubtotal = useMemo(() => lineItems.reduce((sum, item) => sum + item.extended, 0), [lineItems]);
   const subtotal = standardSubtotal + renaissanceCalc.total;
 
-  const normalizedCity = (settings.city || "").trim().toLowerCase();
-  const matchedCityRule = cityRules[normalizedCity] || null;
+  const normalizedLocation = `${settings.city || ""} ${settings.county || ""}`.trim().toLowerCase();
+  const matchedCityRule = Object.entries(cityRules).find(([key]) => normalizedLocation.includes(key))?.[1] || null;
   const locationFee = matchedCityRule?.fee || 0;
   const taxableBase = subtotal * defaultSettings.taxablePortion;
   const salesTax = taxableBase * defaultSettings.taxRate;
   const permittingFee = defaultSettings.permittingFee + locationFee;
   const totalNoFinancing = subtotal + salesTax + permittingFee;
   const depositAmount = Math.min(Math.max(safeNumber(settings.depositAmount), 0), totalNoFinancing);
-  const financedBase = Math.max(totalNoFinancing - depositAmount, 0);
-  const financedSaleAmount = financedBase * (1 + appData.defaultSettings.financingMarkup);
-  const monthlyPayment = financedSaleAmount * (selectedPlan.paymentFactor / 100);
+  const financedSaleAmount = totalNoFinancing * (1 + appData.defaultSettings.financingMarkup);
+  const financedBase = Math.max(financedSaleAmount - depositAmount, 0);
+  const monthlyPayment = financedBase * (selectedPlan.paymentFactor / 100);
+  const commissionRate = selectedTier === "volume" ? 0 : selectedTier === "tier7_5" ? 0.075 : selectedTier === "tier5" ? 0.05 : selectedTier === "tier10" ? 0.10 : 0.15;
+  const commissionAmount = totalNoFinancing * commissionRate;
 
   const flags = useMemo(() => {
     const issues = [];
@@ -466,11 +558,10 @@ function App() {
       if (renaissanceCalc.usesProjectedMath) issues.push("Renaissance base price for projections over 16' is extrapolated from the sheet's current projection pattern.");
       if (renaissanceCalc.projection > renaissanceCalc.panelMeta.maxProjection) issues.push(`${renaissanceCalc.panelMeta.label} cannot be used over ${renaissanceCalc.panelMeta.maxProjection}' projection.`);
       if (renaissanceCalc.postCount < renaissanceCalc.postCountRequired) issues.push(`This cover width requires at least ${renaissanceCalc.postCountRequired} posts with the selected beam upgrade and span-table logic.`);
-      if (safeNumber(renaissance.fanBeams) > 0 && renaissanceCalc.projection < 11) issues.push("Fan beam pricing starts at 11' projection.");
       if (renaissanceCalc.supportBeams < renaissanceCalc.minSupportBeamsForPanels) issues.push(`Projection ${renaissanceCalc.projection}' needs at least ${renaissanceCalc.minSupportBeamsForPanels} added support beam/post row(s) with ${renaissanceCalc.panelMeta.label}, or switch to a deeper panel setup.`);
       if (renaissanceCalc.maxWidthWithCurrentSetup && renaissanceCalc.width > renaissanceCalc.maxWidthWithCurrentSetup) issues.push(`Current front/main beam setup only supports about ${renaissanceCalc.maxWidthWithCurrentSetup}' of width. Add posts and/or upgrade beam/post size.`);
       if (!renaissanceCalc.validUpgradeOptions.includes(renaissance.beamUpgrade)) issues.push("Selected Renaissance beam/post upgrade is under-spanned for this width/projection. Choose a stronger upgrade or more posts.");
-      if (renaissanceCalc.supportBeams > 0) issues.push("Support beam/post rows currently enforce structure logic and upgrade pricing only. Verify any additional base structure charge manually if your final sell sheet requires it.");
+      if (renaissanceCalc.supportBeams > 0) issues.push(`Support beam/post rows are being checked against ${renaissanceCalc.windSpeed} mph / Exposure ${renaissanceCalc.exposure} span logic.`);
     }
 
     return Array.from(new Set(issues));
@@ -489,7 +580,7 @@ function App() {
   function clearAll() {
     setLineQtys(defaultLineState);
     setRenaissance(defaultRenaissance);
-    setSettings((current) => ({ ...current, depositAmount: "" }));
+    setSettings((current) => ({ ...current, city: "", county: "", depositAmount: "" }));
   }
 
   async function copySummary() {
@@ -503,7 +594,10 @@ function App() {
       `Permitting + location fees: ${currency.format(permittingFee)}`,
       `Deposit: ${currency.format(depositAmount)}`,
       `Total no financing: ${currency.format(totalNoFinancing)}`,
+      `Commission: ${currency.format(commissionAmount)}`,
       `Financing plan: ${selectedPlan.label}`,
+      `Financed sale amount: ${currency.format(financedSaleAmount)}`,
+      `Amount being financed: ${currency.format(financedBase)}`,
       `Monthly payment: ${currency.format(monthlyPayment)}`
     ].filter(Boolean).join("\n");
 
@@ -551,15 +645,26 @@ function App() {
                 <span>Pricing tier</span>
                 <strong>{activeTier.label}</strong>
               </div>
-              <label>
-                City / county
-                <input
-                  type="text"
-                  placeholder="Clarksville, Brentwood, Franklin..."
-                  value={settings.city}
-                  onChange={(e) => setSettings((current) => ({ ...current, city: e.target.value }))}
-                />
-              </label>
+              <div className="location-grid">
+                <label>
+                  City
+                  <input
+                    type="text"
+                    placeholder="Clarksville, Brentwood, Franklin..."
+                    value={settings.city}
+                    onChange={(e) => setSettings((current) => ({ ...current, city: e.target.value }))}
+                  />
+                </label>
+                <label>
+                  County
+                  <input
+                    type="text"
+                    placeholder="Williamson, Montgomery..."
+                    value={settings.county}
+                    onChange={(e) => setSettings((current) => ({ ...current, county: e.target.value }))}
+                  />
+                </label>
+              </div>
               <div className="toolbar-buttons">
                 <button className="ghost-btn" onClick={() => expandAll(true)}>Expand all</button>
                 <button className="ghost-btn" onClick={() => expandAll(false)}>Collapse all</button>
@@ -567,6 +672,14 @@ function App() {
             </div>
           </div>
         )}
+      </section>
+
+      <section className="commission-box card">
+        <div>
+          <span>Commission at this tier</span>
+          <strong>{currency.format(commissionAmount)}</strong>
+        </div>
+        <p>{selectedTier === "volume" ? "Volume tier pays no commission but counts toward monthly volume." : `Current tier pays ${(commissionRate * 100).toFixed(1).replace(/\.0$/, "")}% of the quoted total.`}</p>
       </section>
 
       {flags.length > 0 && (
@@ -636,20 +749,12 @@ function App() {
         <aside className="summary-column">
           <section className="card renaissance-card">
             <div className="section-head compact-head">
-              <div><h2>Renaissance</h2><p className="small-note">Span checks use the uploaded 110 mph / Exposure B tables with Table 1A upgrade factors.</p></div>
+              <div><h2>Renaissance</h2><p className="small-note">Span logic now follows style, wind, exposure, support rows, and beam/post upgrade choices.</p></div>
               <button className="ghost-btn" onClick={() => setRenaissanceOpen((value) => !value)}>{renaissanceOpen ? "Hide" : "Show"}</button>
             </div>
 
             {renaissanceOpen && (
               <>
-                <div className="pill-row tight">
-                  {Object.entries(appData.renaissanceTiers).map(([key, tier]) => (
-                    <button key={key} className={renaissance.tier === key ? "pill active" : "pill"} onClick={() => setRenaissance((current) => ({ ...current, tier: key }))}>
-                      {tier.label}
-                    </button>
-                  ))}
-                </div>
-
                 <div className="renaissance-grid">
                   <label>
                     Style
@@ -681,6 +786,18 @@ function App() {
                     Projection
                     <select value={renaissance.projection} onChange={(e) => setRenaissance((current) => ({ ...current, projection: safeNumber(e.target.value) }))}>
                       {projectionOptions.map((value) => <option key={value} value={value}>{value}</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    Wind speed
+                    <select value={renaissance.windSpeed} onChange={(e) => setRenaissance((current) => ({ ...current, windSpeed: safeNumber(e.target.value) }))}>
+                      {windSpeedOptions.map((value) => <option key={value} value={value}>{value} mph</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    Exposure
+                    <select value={renaissance.exposure} onChange={(e) => setRenaissance((current) => ({ ...current, exposure: e.target.value }))}>
+                      {exposureOptions.map((value) => <option key={value} value={value}>{value}</option>)}
                     </select>
                   </label>
                   <label>
@@ -759,6 +876,7 @@ function App() {
 
                 <div className="renaissance-summary">
                   <div className="summary-row"><span>Style</span><strong>{renaissanceCalc.key}</strong></div>
+                  <div className="summary-row"><span>Wind / exposure</span><strong>{renaissanceCalc.windSpeed} mph · {renaissanceCalc.exposure}</strong></div>
                   <div className="summary-row"><span>Required posts</span><strong>{renaissanceCalc.postCountRequired || 0}</strong></div>
                   <div className="summary-row"><span>Support beam/post rows</span><strong>{renaissanceCalc.supportBeams || 0}</strong></div>
                   <div className="summary-row"><span>Effective projection per span</span><strong>{renaissanceCalc.effectiveProjection ? `${renaissanceCalc.effectiveProjection.toFixed(2)}'` : "0'"}</strong></div>
@@ -786,6 +904,7 @@ function App() {
             <div className="summary-row"><span>Sales tax on 40%</span><strong>{currency.format(salesTax)}</strong></div>
             <div className="summary-row"><span>Permitting + location fees</span><strong>{currency.format(permittingFee)}</strong></div>
             <div className="summary-row"><span>Optional deposit</span><strong>{currency.format(depositAmount)}</strong></div>
+            <div className="summary-row accent commission-row"><span>Estimated commission</span><strong>{currency.format(commissionAmount)}</strong></div>
             <div className="summary-row total"><span>Total no financing</span><strong>{currency.format(totalNoFinancing)}</strong></div>
 
             <div className="summary-section">
@@ -800,7 +919,7 @@ function App() {
               <div className="selected-plan-card">
                 <strong>{selectedPlan.label}</strong>
                 <span>{selectedPlan.term} · {selectedPlan.apr}</span>
-                <span>S&amp;S financing markup stays fixed at 10% · Payment factor {selectedPlan.paymentFactor}%</span>
+                <span>Payment factor {selectedPlan.paymentFactor}% · 10% markup is already built into financed sale amount</span>
               </div>
               {financingOpen && (
                 <div className="plan-list compact-plan-list">
@@ -822,12 +941,19 @@ function App() {
                   ))}
                 </div>
               )}
-              <div className="summary-row"><span>Amount being financed</span><strong>{currency.format(financedBase)}</strong></div>
-              <div className="summary-row"><span>Fixed finance markup (10%)</span><strong>{currency.format(financedSaleAmount - financedBase)}</strong></div>
               <div className="summary-row"><span>Financed sale amount</span><strong>{currency.format(financedSaleAmount)}</strong></div>
+              <div className="summary-row"><span>Amount being financed after deposit</span><strong>{currency.format(financedBase)}</strong></div>
               <div className="summary-row accent"><span>{selectedPlan.label}</span><strong>{currency.format(monthlyPayment)}/mo</strong></div>
               {selectedPlan.details ? <p className="small-note">{selectedPlan.details}</p> : null}
             </div>
+          </section>
+
+          <section className="commission-box card bottom-commission">
+            <div>
+              <span>Commission at this tier</span>
+              <strong>{currency.format(commissionAmount)}</strong>
+            </div>
+            <p>{selectedTier === "volume" ? "Volume tier counts revenue only." : `Stay at or move up tiers to improve payout on the same sale.`}</p>
           </section>
         </aside>
       </div>
@@ -858,7 +984,7 @@ function App() {
                 <li>Select the sales sheet tier first.</li>
                 <li>Open only the category you need and enter quantity.</li>
                 <li>Use Renaissance only when that cover is being quoted.</li>
-                <li>Add a deposit if only part of the sale is being financed.</li>
+                <li>Add a deposit only to reduce the financed balance. It does not change the quoted sale amount.</li>
                 <li>Watch the red flags for missing add-ons and restrictions.</li>
               </ol>
             </div>
