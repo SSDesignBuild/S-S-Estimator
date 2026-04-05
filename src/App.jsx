@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { appData } from "./data";
 
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
-const storageKey = "sns-design-build-estimator-v2";
+const storageKey = "sns-design-build-estimator-v4";
 
 const qtyLabels = {
   "Per sqft": "SQFT",
@@ -66,6 +66,14 @@ const defaultRenaissance = {
   fanBeams: 0,
   roofColor: false,
   deductPosts: 0
+};
+
+const renaissanceSectionOptions = {
+  Moderno: { mounts: ["Attached", "Freestanding"], profiles: ["Straight"] },
+  Contempo: { mounts: ["Attached", "Freestanding"], profiles: ["Straight", "Curved"] },
+  Classico: { mounts: ["Attached", "Freestanding"], profiles: ["Straight", "Curved"] },
+  Fresco: { mounts: ["Attached", "Freestanding"], profiles: ["Straight", "Curved"] },
+  Aria: { mounts: ["Attached", "Freestanding"], profiles: ["Straight", "Curved"] }
 };
 
 const defaultSettings = {
@@ -197,8 +205,20 @@ function App() {
     setRenaissance((current) => ({ ...current, beamLength: current.width || 0 }));
   }, [renaissance.width]);
 
+  useEffect(() => {
+    const options = renaissanceSectionOptions[renaissance.section] || renaissanceSectionOptions.Moderno;
+    if (!options.mounts.includes(renaissance.mount) || !options.profiles.includes(renaissance.profile)) {
+      setRenaissance((current) => ({
+        ...current,
+        mount: options.mounts.includes(current.mount) ? current.mount : options.mounts[0],
+        profile: options.profiles.includes(current.profile) ? current.profile : options.profiles[0]
+      }));
+    }
+  }, [renaissance.section, renaissance.mount, renaissance.profile]);
+
   const activeTier = appData.pricingTiers[selectedTier] || appData.pricingTiers.tier5;
   const selectedPlan = financingPlans.find((plan) => plan.id === selectedPlanId) || financingPlans[0];
+  const currentRenaissanceOptions = renaissanceSectionOptions[renaissance.section] || renaissanceSectionOptions.Moderno;
 
   const lineItems = useMemo(() => {
     return appData.categories.flatMap((cat) =>
@@ -503,7 +523,7 @@ function App() {
                   <label>
                     Style
                     <select value={renaissance.section} onChange={(e) => setRenaissance((current) => ({ ...current, section: e.target.value }))}>
-                      {Object.keys(appData.renaissance.sectionOptions).map((section) => (
+                      {Object.keys(renaissanceSectionOptions).map((section) => (
                         <option key={section} value={section}>{section}</option>
                       ))}
                     </select>
@@ -511,7 +531,7 @@ function App() {
                   <label>
                     Mount
                     <select value={renaissance.mount} onChange={(e) => setRenaissance((current) => ({ ...current, mount: e.target.value }))}>
-                      {appData.renaissance.sectionOptions[renaissance.section].mounts.map((option) => (
+                      {currentRenaissanceOptions.mounts.map((option) => (
                         <option key={option} value={option}>{option}</option>
                       ))}
                     </select>
@@ -520,7 +540,7 @@ function App() {
                     <label>
                       End cut
                       <select value={renaissance.profile} onChange={(e) => setRenaissance((current) => ({ ...current, profile: e.target.value }))}>
-                        {appData.renaissance.sectionOptions[renaissance.section].profiles.map((option) => (
+                        {currentRenaissanceOptions.profiles.map((option) => (
                           <option key={option} value={option}>{option}</option>
                         ))}
                       </select>
