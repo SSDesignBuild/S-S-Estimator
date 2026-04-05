@@ -764,6 +764,15 @@ function App() {
         </section>
 
         <aside className="summary-column">
+          {flags.length > 0 && (
+            <section className="flag-list card alert">
+              <h2>Red flags / restrictions</h2>
+              {flags.map((flag) => (
+                <div className="flag" key={`renaissance-${flag}`}>{flag}</div>
+              ))}
+            </section>
+          )}
+
           <section className="card renaissance-card">
             <div className="section-head compact-head">
               <div><h2>Renaissance</h2><p className="small-note">Span logic now follows style, wind, exposure, support rows, and beam/post upgrade choices.</p></div>
