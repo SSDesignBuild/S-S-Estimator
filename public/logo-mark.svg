@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="g" x1="64" y1="32" x2="448" y2="480" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E1BD73"/>
+      <stop offset="1" stop-color="#A57A22"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="120" fill="#151515"/>
+  <rect x="34" y="34" width="444" height="444" rx="96" stroke="url(#g)" stroke-width="20"/>
+  <path d="M146 344V168h56c49 0 79 22 79 61 0 24-13 42-34 51 30 8 47 28 47 58 0 40-31 66-82 66h-66zm44-103h11c22 0 35-9 35-26s-13-25-33-25h-13v51zm0 69h19c24 0 39-10 39-29 0-18-15-28-41-28h-17v57z" fill="url(#g)"/>
+  <path d="M339 168c-35 0-58 21-58 50 0 67 93 40 93 83 0 12-9 21-27 21-19 0-37-7-56-21v35c15 10 36 15 59 15 40 0 68-22 68-54 0-68-93-42-93-82 0-11 9-18 24-18 16 0 31 5 50 16v-33c-15-8-33-12-52-12z" fill="#F6E8C9"/>
+  <path d="M120 394h272" stroke="#F6E8C9" stroke-width="12" stroke-linecap="round"/>
+  <text x="256" y="430" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="40" fill="#F6E8C9" letter-spacing="6">DESIGN BUILD</text>
+</svg>
