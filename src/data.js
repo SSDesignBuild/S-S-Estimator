@@ -3182,6 +3182,7 @@ export const appData = {
       "heavyFoamPerSqft": 9,
       "customRoofColorPerSqft": 4,
       "fanBeamByProjection": {
+        "10": 245,
         "11": 270,
         "12": 295,
         "13": 319,

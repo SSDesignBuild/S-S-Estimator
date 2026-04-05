@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { appData } from "./data";
 
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
-const storageKey = "sns-design-build-estimator-v8";
+const storageKey = "sns-design-build-estimator-v10";
 
 const qtyLabels = {
   "Per sqft": "SQFT",
@@ -92,7 +92,8 @@ const defaultSettings = {
   city: "",
   county: "",
   depositAmount: "",
-  darkMode: false
+  darkMode: false,
+  showCommission: true
 };
 
 function roofSqft(mount, width, projection) {
@@ -302,6 +303,10 @@ function getBaseProjectionPrice(table, width, projection) {
 }
 
 function getFanBeamUnit(addOns, projection) {
+  if (projection === 10) {
+    const explicit10 = safeNumber(addOns.fanBeamByProjection?.["10"]);
+    if (explicit10) return explicit10;
+  }
   const mapped = safeNumber(addOns.fanBeamByProjection?.[String(projection)]);
   if (mapped) return mapped;
   const p11 = safeNumber(addOns.fanBeamByProjection?.["11"]);
@@ -427,6 +432,7 @@ function App() {
     const rsqft = roofSqft(renaissance.mount, width, projection);
     const addOns = appData.renaissance.addOns;
     const fanBeamUnit = getFanBeamUnit(addOns, projection);
+    const fanBeamCount = safeNumber(renaissance.fanBeams);
 
     const baseTiered = base * tierMultiplier * panelMeta.multiplier;
     const adders = [];
@@ -438,17 +444,24 @@ function App() {
     const postUpgradeAmount = postCount * safeNumber(addOns.postUpgradeEach?.[renaissance.postUpgrade]) * tierMultiplier;
     if (postUpgradeAmount) adders.push({ label: `Front/main post upgrade (${renaissance.postUpgrade})`, amount: postUpgradeAmount });
 
-    const beamUpgradeAmount = beamLength * safeNumber(addOns.beamUpgradePerFoot?.[renaissance.beamUpgrade]) * tierMultiplier;
+    const beamUpgradeRate = safeNumber(addOns.beamUpgradePerFoot?.[renaissance.beamUpgrade]);
+    const selectedPostUpgradeRate = safeNumber(addOns.postUpgradeEach?.[renaissance.postUpgrade]);
+    const standardSupportPostRate = +(safeNumber(addOns.postUpgradeEach?.hd) * 0.9).toFixed(2);
+    const standardSupportBeamRate = +(safeNumber(addOns.beamUpgradePerFoot?.hd) * 0.9).toFixed(2);
+    const supportBeamRate = renaissance.beamUpgrade === "none" ? standardSupportBeamRate : beamUpgradeRate;
+    const supportPostRate = renaissance.postUpgrade === "none" ? standardSupportPostRate : selectedPostUpgradeRate;
+
+    const beamUpgradeAmount = beamLength * beamUpgradeRate * tierMultiplier;
     if (beamUpgradeAmount) adders.push({ label: `Front/main beam upgrade (${renaissance.beamUpgrade})`, amount: beamUpgradeAmount });
 
-    const supportBeamUpgradeAmount = supportBeams * beamLength * safeNumber(addOns.beamUpgradePerFoot?.[renaissance.beamUpgrade]) * tierMultiplier;
-    if (supportBeamUpgradeAmount) adders.push({ label: `Support beam row upgrade x${supportBeams}`, amount: supportBeamUpgradeAmount });
+    const supportRowBeamAmount = supportBeams * beamLength * supportBeamRate * tierMultiplier;
+    if (supportRowBeamAmount) adders.push({ label: `Added support beam row(s) x${supportBeams}`, amount: supportRowBeamAmount });
 
-    const supportPostUpgradeAmount = supportBeams * postCount * safeNumber(addOns.postUpgradeEach?.[renaissance.postUpgrade]) * tierMultiplier;
-    if (supportPostUpgradeAmount) adders.push({ label: `Support post row upgrade x${supportBeams}`, amount: supportPostUpgradeAmount });
+    const supportRowPostAmount = supportBeams * postCount * supportPostRate * tierMultiplier;
+    if (supportRowPostAmount) adders.push({ label: `Added support post row(s) x${supportBeams}`, amount: supportRowPostAmount });
 
-    const fanBeamAmount = safeNumber(renaissance.fanBeams) * fanBeamUnit * tierMultiplier;
-    if (fanBeamAmount) adders.push({ label: `Fan beam(s) @ ${projection}'`, amount: fanBeamAmount });
+    const fanBeamAmount = fanBeamCount > 0 ? fanBeamCount * fanBeamUnit * tierMultiplier : 0;
+    if (fanBeamCount > 0 && fanBeamAmount) adders.push({ label: `Fan beam(s) @ ${projection}'`, amount: fanBeamAmount });
 
     const deductPostAmount = safeNumber(renaissance.deductPosts) * safeNumber(addOns.deductPost) * tierMultiplier;
     if (deductPostAmount) adders.push({ label: "Deduct post(s)", amount: deductPostAmount });
@@ -475,12 +488,15 @@ function App() {
       spanPostCountRequired,
       postCount,
       supportBeams,
+      supportBeamRate,
+      supportPostRate,
       minSupportBeamsForPanels,
       effectiveProjection,
       allowedMainSpan,
       maxWidthWithCurrentSetup,
       validUpgradeOptions,
       adders,
+      fanBeamCount,
       baseTiered,
       windSpeed: renaissance.windSpeed,
       exposure: renaissance.exposure,
@@ -562,6 +578,7 @@ function App() {
       if (renaissanceCalc.maxWidthWithCurrentSetup && renaissanceCalc.width > renaissanceCalc.maxWidthWithCurrentSetup) issues.push(`Current front/main beam setup only supports about ${renaissanceCalc.maxWidthWithCurrentSetup}' of width. Add posts and/or upgrade beam/post size.`);
       if (!renaissanceCalc.validUpgradeOptions.includes(renaissance.beamUpgrade)) issues.push("Selected Renaissance beam/post upgrade is under-spanned for this width/projection. Choose a stronger upgrade or more posts.");
       if (renaissanceCalc.supportBeams > 0) issues.push(`Support beam/post rows are being checked against ${renaissanceCalc.windSpeed} mph / Exposure ${renaissanceCalc.exposure} span logic.`);
+      if (renaissanceCalc.fanBeamCount > 0 && !renaissanceCalc.fanBeamUnit) issues.push("Fan beam pricing could not be determined for the selected projection. Verify the sheet.");
     }
 
     return Array.from(new Set(issues));
@@ -586,7 +603,6 @@ function App() {
   async function copySummary() {
     const text = [
       "S&S Design Build Quick Quote",
-      `Sales Sheet Tier: ${activeTier.label}`,
       ...activeItems.map((item) => `${item.category} | ${item.name} | Qty ${item.qty} | ${currency.format(item.extended)}`),
       renaissanceCalc.total > 0 ? `Renaissance | ${renaissanceCalc.key} | ${renaissanceCalc.width}x${renaissanceCalc.projection} | Support rows ${renaissanceCalc.supportBeams} | ${currency.format(renaissanceCalc.total)}` : null,
       `Subtotal: ${currency.format(subtotal)}`,
@@ -594,7 +610,6 @@ function App() {
       `Permitting + location fees: ${currency.format(permittingFee)}`,
       `Deposit: ${currency.format(depositAmount)}`,
       `Total no financing: ${currency.format(totalNoFinancing)}`,
-      `Commission: ${currency.format(commissionAmount)}`,
       `Financing plan: ${selectedPlan.label}`,
       `Financed sale amount: ${currency.format(financedSaleAmount)}`,
       `Amount being financed: ${currency.format(financedBase)}`,
@@ -674,6 +689,7 @@ function App() {
         )}
       </section>
 
+      {settings.showCommission && (
       <section className="commission-box card">
         <div>
           <span>Commission at this tier</span>
@@ -681,6 +697,7 @@ function App() {
         </div>
         <p>{selectedTier === "volume" ? "Volume tier pays no commission but counts toward monthly volume." : `Current tier pays ${(commissionRate * 100).toFixed(1).replace(/\.0$/, "")}% of the quoted total.`}</p>
       </section>
+      )}
 
       {flags.length > 0 && (
         <section className="flag-list card alert">
@@ -825,6 +842,10 @@ function App() {
                     />
                     <span>Add .032 skin</span>
                   </label>
+                  <label className="check solo-check">
+                    <input type="checkbox" checked={renaissance.roofColor} onChange={(e) => setRenaissance((current) => ({ ...current, roofColor: e.target.checked }))} />
+                    <span>Add roof color</span>
+                  </label>
                   <label>
                     Required / quoted posts
                     <input type="number" min="0" value={renaissance.postCountOverride || renaissanceCalc.postCountRequired || 0} onChange={(e) => setRenaissance((current) => ({ ...current, postCountOverride: e.target.value }))} />
@@ -839,7 +860,7 @@ function App() {
                   </label>
                   <label>
                     Fan beam unit
-                    <input type="text" value={renaissanceCalc.fanBeamUnit ? currency.format(renaissanceCalc.fanBeamUnit * renaissanceCalc.tierMultiplier) : "$0.00"} readOnly />
+                    <input type="text" value={renaissanceCalc.fanBeamCount > 0 && renaissanceCalc.fanBeamUnit ? currency.format(renaissanceCalc.fanBeamUnit * renaissanceCalc.tierMultiplier) : "$0.00"} readOnly />
                   </label>
                   <label>
                     Post upgrade
@@ -867,10 +888,6 @@ function App() {
                   <label>
                     Deduct posts
                     <input type="number" min="0" value={renaissance.deductPosts} onChange={(e) => setRenaissance((current) => ({ ...current, deductPosts: e.target.value }))} />
-                  </label>
-                  <label className="check solo-check">
-                    <input type="checkbox" checked={renaissance.roofColor} onChange={(e) => setRenaissance((current) => ({ ...current, roofColor: e.target.checked }))} />
-                    <span>Add roof color</span>
                   </label>
                 </div>
 
@@ -904,23 +921,22 @@ function App() {
             <div className="summary-row"><span>Sales tax on 40%</span><strong>{currency.format(salesTax)}</strong></div>
             <div className="summary-row"><span>Permitting + location fees</span><strong>{currency.format(permittingFee)}</strong></div>
             <div className="summary-row"><span>Optional deposit</span><strong>{currency.format(depositAmount)}</strong></div>
-            <div className="summary-row accent commission-row"><span>Estimated commission</span><strong>{currency.format(commissionAmount)}</strong></div>
-            <div className="summary-row total"><span>Total no financing</span><strong>{currency.format(totalNoFinancing)}</strong></div>
+                        <div className="summary-row total"><span>Total no financing</span><strong>{currency.format(totalNoFinancing)}</strong></div>
 
             <div className="summary-section">
               <div className="section-head compact-head no-margin-bottom">
                 <h3>Financing plan</h3>
-                <button className="ghost-btn" onClick={() => setFinancingOpen((value) => !value)}>{financingOpen ? "Hide options" : "Change plan"}</button>
+              </div>
+              <button className="ghost-btn financing-toggle" onClick={() => setFinancingOpen((value) => !value)}>{financingOpen ? "Hide options" : "Change plan"}</button>
+              <div className="selected-plan-card">
+                <strong>{selectedPlan.label}</strong>
+                <span>{selectedPlan.term} · {selectedPlan.apr}</span>
+                <span>Payment factor {selectedPlan.paymentFactor}%</span>
               </div>
               <label>
                 Deposit / cash down
                 <input type="number" min="0" step="0.01" value={settings.depositAmount} onChange={(e) => setSettings((current) => ({ ...current, depositAmount: e.target.value }))} />
               </label>
-              <div className="selected-plan-card">
-                <strong>{selectedPlan.label}</strong>
-                <span>{selectedPlan.term} · {selectedPlan.apr}</span>
-                <span>Payment factor {selectedPlan.paymentFactor}% · 10% markup is already built into financed sale amount</span>
-              </div>
               {financingOpen && (
                 <div className="plan-list compact-plan-list">
                   {financingPlans.map((plan) => (
@@ -948,6 +964,7 @@ function App() {
             </div>
           </section>
 
+          {settings.showCommission && (
           <section className="commission-box card bottom-commission">
             <div>
               <span>Commission at this tier</span>
@@ -955,6 +972,7 @@ function App() {
             </div>
             <p>{selectedTier === "volume" ? "Volume tier counts revenue only." : `Stay at or move up tiers to improve payout on the same sale.`}</p>
           </section>
+          )}
         </aside>
       </div>
 
@@ -975,6 +993,10 @@ function App() {
               <label className="check">
                 <input type="checkbox" checked={settings.darkMode} onChange={(e) => setSettings((current) => ({ ...current, darkMode: e.target.checked }))} />
                 <span>Dark mode</span>
+              </label>
+              <label className="check">
+                <input type="checkbox" checked={settings.showCommission} onChange={(e) => setSettings((current) => ({ ...current, showCommission: e.target.checked }))} />
+                <span>Show commission boxes</span>
               </label>
             </div>
 

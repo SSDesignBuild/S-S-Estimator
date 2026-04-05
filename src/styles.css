@@ -36,7 +36,7 @@ body {
   color: var(--ink);
   overflow-x: hidden;
 }
-button, input, select { font: inherit; }
+button, input, select, textarea { font: inherit; }
 button { color: inherit; }
 a { color: inherit; }
 
@@ -261,13 +261,15 @@ label {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   background: transparent;
   color: inherit;
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 11px 12px;
+  font-size: 16px;
 }
 
 .qty-input {
@@ -575,4 +577,14 @@ select {
 
 .compact-plan-list {
   max-height: 280px;
+}
+
+.financing-toggle {
+  margin-bottom: 10px;
+}
+
+@media (max-width: 768px) {
+  input, select, textarea {
+    font-size: 16px;
+  }
 }
