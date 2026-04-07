@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { appData } from "./data";
 
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
-const storageKey = "sns-design-build-estimator-v13";
+const storageKey = "sns-design-build-estimator-v16";
 
 const qtyLabels = {
   "Per sqft": "SQFT",
@@ -50,6 +50,13 @@ const cityRules = {
     ])
   )
 };
+
+
+function selectInputText(event) {
+  if (typeof event?.target?.select === "function") {
+    event.target.select();
+  }
+}
 
 function organizeCategories(categories) {
   const engineeringIds = new Set([
@@ -690,17 +697,29 @@ function App() {
   }
 
   async function copySummary() {
+    const useFinancedLineSpread = !settings.showNoFinancingTotal;
+    const copySpreadRatio = useFinancedLineSpread && subtotal > 0
+      ? Math.max((financedSaleAmount - salesTax - permittingFee) / subtotal, 1)
+      : 1;
+    const quotedItems = activeItems.map((item) => {
+      const shownAmount = useFinancedLineSpread ? item.extended * copySpreadRatio : item.extended;
+      return `${item.category} | ${item.name} | Qty ${item.qty} | ${currency.format(shownAmount)}`;
+    });
+    const renaissanceLine = renaissanceCalc.total > 0
+      ? `Renaissance | ${renaissanceCalc.key} | ${renaissanceCalc.width}x${renaissanceCalc.projection} | Support rows ${renaissanceCalc.supportBeams} | ${currency.format(useFinancedLineSpread ? renaissanceCalc.total * copySpreadRatio : renaissanceCalc.total)}`
+      : null;
+
     const text = [
       "S&S Design Build Quick Quote",
-      ...activeItems.map((item) => `${item.category} | ${item.name} | Qty ${item.qty} | ${currency.format(item.extended)}`),
-      renaissanceCalc.total > 0 ? `Renaissance | ${renaissanceCalc.key} | ${renaissanceCalc.width}x${renaissanceCalc.projection} | Support rows ${renaissanceCalc.supportBeams} | ${currency.format(renaissanceCalc.total)}` : null,
-      `Subtotal: ${currency.format(subtotal)}`,
+      ...quotedItems,
+      renaissanceLine,
+      `Subtotal: ${currency.format(useFinancedLineSpread ? subtotal * copySpreadRatio : subtotal)}`,
       `Sales tax: ${currency.format(salesTax)}`,
       `Permitting + location fees: ${currency.format(permittingFee)}`,
       `Deposit: ${currency.format(depositAmount)}`,
-      `Total no financing: ${currency.format(totalNoFinancing)}`,
+      settings.showNoFinancingTotal ? `Cash Price: ${currency.format(totalNoFinancing)}` : null,
       `Financing plan: ${selectedPlan.label}`,
-      `Financed sale amount: ${currency.format(financedSaleAmount)}`,
+      `Financing Price: ${currency.format(financedSaleAmount)}`,
       `Amount being financed: ${currency.format(financedBase)}`,
       `Monthly payment: ${currency.format(monthlyPayment)}`
     ].filter(Boolean).join("\n");
@@ -875,15 +894,7 @@ function App() {
             </>
           ) : (
             <>
-              {flags.length > 0 && (
-                <section className="flag-list card alert inline-alert">
-                  <h2>Red flags / restrictions</h2>
-                  {flags.map((flag) => (
-                    <div className="flag" key={`ren-${flag}`}>{flag}</div>
-                  ))}
-                </section>
-              )}
-              <div className="section-head compact-head">
+                            <div className="section-head compact-head">
                 <div><h2>Renaissance</h2><p className="small-note">Premium patio cover pricing. Swipe right to return to the standard sheet.</p></div>
                 <button className="ghost-btn" onClick={() => setRenaissanceOpen((value) => !value)}>{renaissanceOpen ? "Hide" : "Show"}</button>
               </div>
@@ -911,11 +922,11 @@ function App() {
                     </label>
                     <label>
                       Width
-                      <input type="number" inputMode="decimal" min="0" max="40" step="1" value={renaissance.width} onChange={(e) => setRenaissance((current) => ({ ...current, width: safeNumber(e.target.value) }))} />
+                      <input type="number" inputMode="decimal" min="0" max="40" step="1" value={renaissance.width} onFocus={selectInputText} onChange={(e) => setRenaissance((current) => ({ ...current, width: safeNumber(e.target.value) }))} />
                     </label>
                     <label>
                       Projection
-                      <input type="number" inputMode="decimal" min="0" max="30" step="1" value={renaissance.projection} onChange={(e) => setRenaissance((current) => ({ ...current, projection: safeNumber(e.target.value) }))} />
+                      <input type="number" inputMode="decimal" min="0" max="30" step="1" value={renaissance.projection} onFocus={selectInputText} onChange={(e) => setRenaissance((current) => ({ ...current, projection: safeNumber(e.target.value) }))} />
                     </label>
                     <label>
                       Front overhang
@@ -1026,6 +1037,14 @@ function App() {
       </div>
 
               <aside className="summary-column">
+          {flags.length > 0 && (
+            <section className="flag-list card alert inline-alert summary-alert">
+              <h2>Red flags / restrictions</h2>
+              {flags.map((flag) => (
+                <div className="flag" key={`summary-${flag}`}>{flag}</div>
+              ))}
+            </section>
+          )}
           <section className="card sticky-card">
             <div className="section-head compact-head">
               <div>
@@ -1042,7 +1061,7 @@ function App() {
               <span>Remove permit cost</span>
             </label>
             <div className="summary-row"><span>Optional deposit</span><strong>{currency.format(depositAmount)}</strong></div>
-            {settings.showNoFinancingTotal && <div className="summary-row total"><span>Total no financing</span><strong>{currency.format(totalNoFinancing)}</strong></div>}
+            {settings.showNoFinancingTotal && <div className="summary-row total"><span>Cash Price</span><strong>{currency.format(totalNoFinancing)}</strong></div>}
 
             <div className="summary-section">
               <div className="section-head compact-head no-margin-bottom">
@@ -1071,7 +1090,7 @@ function App() {
                   ))}
                 </div>
               )}
-              <div className="summary-row"><span>Financed sale amount</span><strong>{currency.format(financedSaleAmount)}</strong></div>
+              <div className="summary-row"><span>Financing Price</span><strong>{currency.format(financedSaleAmount)}</strong></div>
               <div className="summary-row"><span>Amount being financed after deposit</span><strong>{currency.format(financedBase)}</strong></div>
               <div className="summary-row accent"><span>{selectedPlan.label}</span><strong>{currency.format(monthlyPayment)}/mo</strong></div>
               {selectedPlan.details ? <p className="small-note">{selectedPlan.details}</p> : null}
@@ -1113,14 +1132,14 @@ function App() {
               </label>
               <label className="check">
                 <input type="checkbox" checked={settings.showNoFinancingTotal} onChange={(e) => setSettings((current) => ({ ...current, showNoFinancingTotal: e.target.checked }))} />
-                <span>Show total no financing</span>
+                <span>Show cash price</span>
               </label>
             </div>
 
             <div className="help-block">
               <h3>How to use</h3>
               <ol>
-                <li>Select the sales sheet tier first.</li>
+                <li>Select the tier first.</li>
                 <li>Use the search bar to jump straight to the service you need.</li>
                 <li>Swipe left or tap Renaissance view when quoting patio covers.</li>
                 <li>Front and side overhangs reduce the framed span used for the structural checks.</li>
