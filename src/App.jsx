@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { appData } from "./data";
 
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
-const storageKey = "sns-design-build-estimator-v10";
+const storageKey = "sns-design-build-estimator-v13";
 
 const qtyLabels = {
   "Per sqft": "SQFT",
@@ -51,9 +51,32 @@ const cityRules = {
   )
 };
 
-const defaultLineState = Object.fromEntries(appData.categories.flatMap((cat) => cat.items.map((item) => [item.id, ""])));
-const defaultExpanded = Object.fromEntries(appData.categories.map((cat) => [cat.name, false]));
-const widthOptions = [0, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40];
+function organizeCategories(categories) {
+  const engineeringIds = new Set([
+    "outdoor-living-engineering-wood-structures",
+    "outdoor-living-engineering-renaissance",
+    "outdoor-living-permitting"
+  ]);
+  const uiCategories = [];
+  const engineeringItems = [];
+
+  categories.forEach((cat) => {
+    const kept = [];
+    cat.items.forEach((item) => {
+      if (engineeringIds.has(item.id)) engineeringItems.push(item);
+      else kept.push(item);
+    });
+    if (kept.length) uiCategories.push({ ...cat, items: kept });
+  });
+
+  uiCategories.push({ name: "Engineering", items: engineeringItems });
+  return uiCategories;
+}
+
+const uiCategories = organizeCategories(appData.categories);
+const defaultLineState = Object.fromEntries(uiCategories.flatMap((cat) => cat.items.map((item) => [item.id, ""])));
+const defaultExpanded = Object.fromEntries(uiCategories.map((cat) => [cat.name, false]));
+const widthOptions = [0, ...Array.from({ length: 31 }, (_, i) => i + 10)];
 const projectionOptions = [0, ...Array.from({ length: 21 }, (_, i) => i + 10)];
 
 const defaultRenaissance = {
@@ -68,6 +91,9 @@ const defaultRenaissance = {
   fanBeams: 0,
   postUpgrade: "none",
   beamUpgrade: "none",
+  supportUpgrade: "none",
+  frontOverhang: 0,
+  sideOverhang: 0,
   roofColor: false,
   upgradeFoam: false,
   upgrade032: false,
@@ -93,7 +119,9 @@ const defaultSettings = {
   county: "",
   depositAmount: "",
   darkMode: false,
-  showCommission: true
+  showCommission: true,
+  removePermit: false,
+  showNoFinancingTotal: true
 };
 
 function roofSqft(mount, width, projection) {
@@ -288,18 +316,57 @@ function safeNumber(value) {
   return Number.isFinite(num) ? num : 0;
 }
 
+function interpolateFromRow(row, width) {
+  if (!row || !width) return 0;
+  const widths = Object.keys(row).map(Number).sort((a, b) => a - b);
+  if (!widths.length) return 0;
+  if (row[String(width)]) return safeNumber(row[String(width)]);
+  if (width < widths[0] || width > widths[widths.length - 1]) return 0;
+  let lower = widths[0], upper = widths[widths.length - 1];
+  for (let i = 0; i < widths.length - 1; i += 1) {
+    if (width > widths[i] && width < widths[i + 1]) {
+      lower = widths[i];
+      upper = widths[i + 1];
+      break;
+    }
+  }
+  const low = safeNumber(row[String(lower)]);
+  const high = safeNumber(row[String(upper)]);
+  if (!low || !high) return 0;
+  const ratio = (width - lower) / (upper - lower);
+  return Math.round(low + (high - low) * ratio);
+}
+
 function getBaseProjectionPrice(table, width, projection) {
   if (!width || !projection) return 0;
-  const exact = table?.[String(projection)]?.[String(width)];
-  if (exact) return exact;
-  if (projection > 16) {
-    const p16 = safeNumber(table?.["16"]?.[String(width)]);
-    const p15 = safeNumber(table?.["15"]?.[String(width)]);
+  const p = Number(projection);
+  const exactRow = table?.[String(p)];
+  if (exactRow) return interpolateFromRow(exactRow, width);
+
+  const rows = Object.keys(table || {}).map(Number).sort((a, b) => a - b);
+  if (!rows.length) return 0;
+
+  if (p > 16) {
+    const p16 = interpolateFromRow(table?.["16"], width);
+    const p15 = interpolateFromRow(table?.["15"], width);
     if (!p16 || !p15) return 0;
     const step = p16 - p15;
-    return Math.round(p16 + step * (projection - 16));
+    return Math.round(p16 + step * (p - 16));
   }
-  return 0;
+
+  let lower = rows[0], upper = rows[rows.length - 1];
+  for (let i = 0; i < rows.length - 1; i += 1) {
+    if (p > rows[i] && p < rows[i + 1]) {
+      lower = rows[i];
+      upper = rows[i + 1];
+      break;
+    }
+  }
+  const low = interpolateFromRow(table?.[String(lower)], width);
+  const high = interpolateFromRow(table?.[String(upper)], width);
+  if (!low || !high) return 0;
+  const ratio = (p - lower) / (upper - lower);
+  return Math.round(low + (high - low) * ratio);
 }
 
 function getFanBeamUnit(addOns, projection) {
@@ -330,6 +397,9 @@ function App() {
   const [renaissanceOpen, setRenaissanceOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [financingOpen, setFinancingOpen] = useState(false);
+  const [activeView, setActiveView] = useState("standard");
+  const [searchTerm, setSearchTerm] = useState("");
+  const touchStartX = useRef(null);
 
   useEffect(() => {
     const saved = localStorage.getItem(storageKey);
@@ -347,6 +417,8 @@ function App() {
       if (typeof parsed.toolbarOpen === "boolean") setToolbarOpen(parsed.toolbarOpen);
       if (typeof parsed.renaissanceOpen === "boolean") setRenaissanceOpen(parsed.renaissanceOpen);
       if (typeof parsed.financingOpen === "boolean") setFinancingOpen(parsed.financingOpen);
+      if (["standard", "renaissance"].includes(parsed.activeView)) setActiveView(parsed.activeView);
+      if (typeof parsed.searchTerm === "string") setSearchTerm(parsed.searchTerm);
     } catch (err) {
       console.error("Failed to load saved estimator state:", err);
       localStorage.removeItem(storageKey);
@@ -356,17 +428,17 @@ function App() {
   useEffect(() => {
     localStorage.setItem(
       storageKey,
-      JSON.stringify({ selectedTier, lineQtys, settings, selectedPlanId, renaissance, expanded, toolbarOpen, renaissanceOpen, financingOpen })
+      JSON.stringify({ selectedTier, lineQtys, settings, selectedPlanId, renaissance, expanded, toolbarOpen, renaissanceOpen, financingOpen, activeView, searchTerm })
     );
-  }, [selectedTier, lineQtys, settings, selectedPlanId, renaissance, expanded, toolbarOpen, renaissanceOpen, financingOpen]);
+  }, [selectedTier, lineQtys, settings, selectedPlanId, renaissance, expanded, toolbarOpen, renaissanceOpen, financingOpen, activeView, searchTerm]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = settings.darkMode ? "dark" : "light";
   }, [settings.darkMode]);
 
   useEffect(() => {
-    setRenaissance((current) => ({ ...current, beamLength: current.width || 0 }));
-  }, [renaissance.width]);
+    setRenaissance((current) => ({ ...current, beamLength: Math.max(safeNumber(current.width) - safeNumber(current.sideOverhang) * 2, 0) }));
+  }, [renaissance.width, renaissance.sideOverhang]);
 
   useEffect(() => {
     const options = renaissanceSectionOptions[renaissance.section] || renaissanceSectionOptions.Moderno;
@@ -380,26 +452,35 @@ function App() {
   }, [renaissance.section, renaissance.mount, renaissance.profile]);
 
   useEffect(() => {
-    const effectiveProjection = renaissance.projection ? getProjectionSegments(renaissance.projection, safeNumber(renaissance.supportBeams)) : 0;
+    const framedProjection = Math.max(safeNumber(renaissance.projection) - safeNumber(renaissance.frontOverhang), 0);
+    const framedWidth = Math.max(safeNumber(renaissance.width) - safeNumber(renaissance.sideOverhang) * 2, 0);
+    const effectiveProjection = framedProjection ? getProjectionSegments(framedProjection, safeNumber(renaissance.supportBeams)) : 0;
     const validOptions = ["none", "hd", "wide", "wideInsert"].filter((upgradeKey) => {
       const allowed = getAllowedSpan(renaissance.section, Math.max(8, Math.min(30, effectiveProjection || 8)), upgradeKey, renaissance.windSpeed, renaissance.exposure);
-      const postCount = safeNumber(renaissance.postCountOverride || getRequiredPostCount(renaissance.width));
-      return !renaissance.width || !postCount || renaissance.width <= allowed * Math.max(postCount - 1, 1);
+      const postCount = safeNumber(renaissance.postCountOverride || getRequiredPostCount(framedWidth));
+      return !framedWidth || !postCount || framedWidth <= allowed * Math.max(postCount - 1, 1);
     });
 
     if (validOptions.length && !validOptions.includes(renaissance.beamUpgrade)) {
       setRenaissance((current) => ({ ...current, beamUpgrade: validOptions[0], postUpgrade: validOptions[0] }));
     }
-  }, [renaissance.section, renaissance.width, renaissance.projection, renaissance.supportBeams, renaissance.postCountOverride, renaissance.beamUpgrade, renaissance.windSpeed, renaissance.exposure]);
+  }, [renaissance.section, renaissance.width, renaissance.projection, renaissance.frontOverhang, renaissance.sideOverhang, renaissance.supportBeams, renaissance.postCountOverride, renaissance.beamUpgrade, renaissance.windSpeed, renaissance.exposure]);
 
   const activeTier = appData.pricingTiers[selectedTier] || appData.pricingTiers.tier5;
   const selectedPlan = financingPlans.find((plan) => plan.id === selectedPlanId) || financingPlans[0];
   const currentRenaissanceOptions = renaissanceSectionOptions[renaissance.section] || renaissanceSectionOptions.Moderno;
   const renaissanceStyleKey = renaissance.section;
 
+  const categories = uiCategories;
+  const normalizedSearch = searchTerm.trim().toLowerCase();
+  const filteredCategories = useMemo(() => categories.map((cat) => ({
+    ...cat,
+    items: cat.items.filter((item) => !normalizedSearch || item.name.toLowerCase().includes(normalizedSearch) || cat.name.toLowerCase().includes(normalizedSearch))
+  })).filter((cat) => cat.items.length), [categories, normalizedSearch]);
+
   const lineItems = useMemo(
     () =>
-      appData.categories.flatMap((cat) =>
+      categories.flatMap((cat) =>
         cat.items.map((item) => {
           const qty = safeNumber(lineQtys[item.id] || 0);
           const extended = qty * item.basePrice * activeTier.multiplier;
@@ -417,18 +498,22 @@ function App() {
     const table = appData.renaissance.styles[key] || {};
     const width = safeNumber(renaissance.width);
     const projection = safeNumber(renaissance.projection);
+    const frontOverhang = safeNumber(renaissance.frontOverhang);
+    const sideOverhang = safeNumber(renaissance.sideOverhang);
+    const framedWidth = Math.max(width - sideOverhang * 2, 0);
+    const framedProjection = Math.max(projection - frontOverhang, 0);
     const base = getBaseProjectionPrice(table, width, projection);
     const tierMultiplier = activeTier.multiplier;
     const panelMeta = getPanelTypeMeta(renaissance.panelType, renaissance.upgradeFoam, renaissance.upgrade032);
     const supportBeams = safeNumber(renaissance.supportBeams);
-    const effectiveProjection = projection ? +getProjectionSegments(projection, supportBeams).toFixed(2) : 0;
-    const minSupportBeamsForPanels = projection ? Math.max(0, Math.ceil(projection / panelMeta.maxProjection) - 1) : 0;
+    const effectiveProjection = framedProjection ? +getProjectionSegments(framedProjection, supportBeams).toFixed(2) : 0;
+    const minSupportBeamsForPanels = framedProjection ? Math.max(0, Math.ceil(framedProjection / panelMeta.maxProjection) - 1) : 0;
     const allowedMainSpan = getAllowedSpan(renaissance.section, Math.max(8, Math.min(30, effectiveProjection || 8)), renaissance.beamUpgrade, renaissance.windSpeed, renaissance.exposure);
-    const legendPostCountRequired = getRequiredPostCount(width);
-    const spanPostCountRequired = getRequiredPostsBySpan(width, allowedMainSpan);
+    const legendPostCountRequired = getRequiredPostCount(framedWidth);
+    const spanPostCountRequired = getRequiredPostsBySpan(framedWidth, allowedMainSpan);
     const postCountRequired = Math.max(legendPostCountRequired, spanPostCountRequired);
     const postCount = safeNumber(renaissance.postCountOverride || postCountRequired);
-    const beamLength = width || 0;
+    const beamLength = framedWidth || 0;
     const rsqft = roofSqft(renaissance.mount, width, projection);
     const addOns = appData.renaissance.addOns;
     const fanBeamUnit = getFanBeamUnit(addOns, projection);
@@ -448,8 +533,8 @@ function App() {
     const selectedPostUpgradeRate = safeNumber(addOns.postUpgradeEach?.[renaissance.postUpgrade]);
     const standardSupportPostRate = +(safeNumber(addOns.postUpgradeEach?.hd) * 0.9).toFixed(2);
     const standardSupportBeamRate = +(safeNumber(addOns.beamUpgradePerFoot?.hd) * 0.9).toFixed(2);
-    const supportBeamRate = renaissance.beamUpgrade === "none" ? standardSupportBeamRate : beamUpgradeRate;
-    const supportPostRate = renaissance.postUpgrade === "none" ? standardSupportPostRate : selectedPostUpgradeRate;
+    const supportBeamRate = renaissance.supportUpgrade === "none" ? standardSupportBeamRate : safeNumber(addOns.beamUpgradePerFoot?.[renaissance.supportUpgrade]);
+    const supportPostRate = renaissance.supportUpgrade === "none" ? standardSupportPostRate : safeNumber(addOns.postUpgradeEach?.[renaissance.supportUpgrade]);
 
     const beamUpgradeAmount = beamLength * beamUpgradeRate * tierMultiplier;
     if (beamUpgradeAmount) adders.push({ label: `Front/main beam upgrade (${renaissance.beamUpgrade})`, amount: beamUpgradeAmount });
@@ -470,13 +555,17 @@ function App() {
     const maxWidthWithCurrentSetup = allowedMainSpan && postCount > 1 ? +(allowedMainSpan * (postCount - 1)).toFixed(2) : 0;
     const validUpgradeOptions = ["none", "hd", "wide", "wideInsert"].filter((upgradeKey) => {
       const span = getAllowedSpan(renaissance.section, Math.max(8, Math.min(30, effectiveProjection || 8)), upgradeKey, renaissance.windSpeed, renaissance.exposure);
-      return !width || !postCount || width <= span * Math.max(postCount - 1, 1);
+      return !framedWidth || !postCount || framedWidth <= span * Math.max(postCount - 1, 1);
     });
 
     return {
       key,
       width,
       projection,
+      frontOverhang,
+      sideOverhang,
+      framedWidth,
+      framedProjection,
       base,
       rsqft,
       beamLength,
@@ -515,7 +604,7 @@ function App() {
   const locationFee = matchedCityRule?.fee || 0;
   const taxableBase = subtotal * defaultSettings.taxablePortion;
   const salesTax = taxableBase * defaultSettings.taxRate;
-  const permittingFee = defaultSettings.permittingFee + locationFee;
+  const permittingFee = settings.removePermit ? 0 : defaultSettings.permittingFee + locationFee;
   const totalNoFinancing = subtotal + salesTax + permittingFee;
   const depositAmount = Math.min(Math.max(safeNumber(settings.depositAmount), 0), totalNoFinancing);
   const financedSaleAmount = totalNoFinancing * (1 + appData.defaultSettings.financingMarkup);
@@ -591,13 +680,13 @@ function App() {
   }
 
   function expandAll(value) {
-    setExpanded(Object.fromEntries(appData.categories.map((cat) => [cat.name, value])));
+    setExpanded(Object.fromEntries(categories.map((cat) => [cat.name, value])));
   }
 
   function clearAll() {
     setLineQtys(defaultLineState);
     setRenaissance(defaultRenaissance);
-    setSettings((current) => ({ ...current, city: "", county: "", depositAmount: "" }));
+    setSettings((current) => ({ ...current, ...defaultSettings, darkMode: current.darkMode, showCommission: current.showCommission, showNoFinancingTotal: current.showNoFinancingTotal }));
   }
 
   async function copySummary() {
@@ -638,11 +727,31 @@ function App() {
         </div>
       </header>
 
+      <section className="hero-strip">
+        <div className="hero-stat card">
+          <span>Tier</span>
+          <strong>{activeTier.label}</strong>
+          <small>{lineCount} active item{lineCount === 1 ? "" : "s"}</small>
+        </div>
+        {settings.showNoFinancingTotal && (
+          <div className="hero-stat card hero-stat-accent">
+            <span>Total no financing</span>
+            <strong>{currency.format(totalNoFinancing)}</strong>
+            <small>Tax and permit included</small>
+          </div>
+        )}
+        <div className="hero-stat card">
+          <span>Monthly payment</span>
+          <strong>{currency.format(monthlyPayment)}/mo</strong>
+          <small>{selectedPlan.label}</small>
+        </div>
+      </section>
+
       <section className="toolbar card">
         <div className="section-head compact-head">
           <div>
             <h2>Sales sheet tier</h2>
-            <p className="small-note">Choose the sheet first, then collapse it if you want more room.</p>
+            <p className="small-note">Global tier controls both the standard sheet and Renaissance pricing.</p>
           </div>
           <button className="ghost-btn" onClick={() => setToolbarOpen((value) => !value)}>{toolbarOpen ? "Hide" : "Show"}</button>
         </div>
@@ -655,29 +764,32 @@ function App() {
                 </button>
               ))}
             </div>
-            <div className="toolbar-meta">
+            <div className="pill-row view-pill-row">
+              <button className={activeView === "standard" ? "pill active" : "pill"} onClick={() => setActiveView("standard")}>Standard pricing</button>
+              <button className={activeView === "renaissance" ? "pill active" : "pill"} onClick={() => setActiveView("renaissance")}>Renaissance</button>
+            </div>
+            <div className="toolbar-meta toolbar-meta-wide">
               <div className="stat-box">
                 <span>Pricing tier</span>
                 <strong>{activeTier.label}</strong>
               </div>
+              <label>
+                Search services
+                <input
+                  type="text"
+                  placeholder="Search concrete, screen, deck, permit..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+              </label>
               <div className="location-grid">
                 <label>
                   City
-                  <input
-                    type="text"
-                    placeholder="Clarksville, Brentwood, Franklin..."
-                    value={settings.city}
-                    onChange={(e) => setSettings((current) => ({ ...current, city: e.target.value }))}
-                  />
+                  <input type="text" placeholder="Clarksville, Brentwood..." value={settings.city} onChange={(e) => setSettings((current) => ({ ...current, city: e.target.value }))} />
                 </label>
                 <label>
                   County
-                  <input
-                    type="text"
-                    placeholder="Williamson, Montgomery..."
-                    value={settings.county}
-                    onChange={(e) => setSettings((current) => ({ ...current, county: e.target.value }))}
-                  />
+                  <input type="text" placeholder="Williamson, Montgomery..." value={settings.county} onChange={(e) => setSettings((current) => ({ ...current, county: e.target.value }))} />
                 </label>
               </div>
               <div className="toolbar-buttons">
@@ -690,13 +802,13 @@ function App() {
       </section>
 
       {settings.showCommission && (
-      <section className="commission-box card">
-        <div>
-          <span>Commission at this tier</span>
-          <strong>{currency.format(commissionAmount)}</strong>
-        </div>
-        <p>{selectedTier === "volume" ? "Volume tier pays no commission but counts toward monthly volume." : `Current tier pays ${(commissionRate * 100).toFixed(1).replace(/\.0$/, "")}% of the quoted total.`}</p>
-      </section>
+        <section className="commission-box card">
+          <div>
+            <span>Commission at this tier</span>
+            <strong>{currency.format(commissionAmount)}</strong>
+          </div>
+          <p>{selectedTier === "volume" ? "Volume tier pays no commission but still counts toward monthly volume." : `Current tier pays ${(commissionRate * 100).toFixed(1).replace(/\.0$/, "")}% of the quoted total.`}</p>
+        </section>
       )}
 
       {flags.length > 0 && (
@@ -708,216 +820,230 @@ function App() {
         </section>
       )}
 
-      <div className="main-grid">
+      <div
+        className="main-grid"
+        onTouchStart={(e) => { touchStartX.current = e.changedTouches[0]?.clientX ?? null; }}
+        onTouchEnd={(e) => {
+          const endX = e.changedTouches[0]?.clientX ?? null;
+          if (touchStartX.current == null || endX == null) return;
+          const delta = endX - touchStartX.current;
+          if (Math.abs(delta) < 50) return;
+          setActiveView(delta < 0 ? "renaissance" : "standard");
+        }}
+      >
         <section className="card">
-          <div className="section-head">
-            <div>
-              <h2>Standard pricing sheet</h2>
-              <p className="small-note">Fast fill layout for on-the-spot quoting.</p>
-            </div>
-            <div className="toolbar-buttons inline-actions">
-              <button className="ghost-btn" onClick={clearAll}>Clear inputs</button>
-              <button className="ghost-btn" onClick={() => expandAll(true)}>Expand all</button>
-              <button className="ghost-btn" onClick={() => expandAll(false)}>Collapse all</button>
-            </div>
-          </div>
-
-          {appData.categories.map((cat) => (
-            <div className="category" key={cat.name}>
-              <button className={activeCategoryNames.has(cat.name) ? "category-toggle active-cat" : "category-toggle"} onClick={() => setExpanded((current) => ({ ...current, [cat.name]: !current[cat.name] }))}>
-                <strong>{cat.name}</strong>
-                <span>{expanded[cat.name] ? "Hide" : "Show"}</span>
-              </button>
-              {expanded[cat.name] && (
-                <div className="item-list">
-                  {cat.items.map((item) => {
-                    const qty = lineQtys[item.id] || "";
-                    const total = safeNumber(qty) * item.basePrice * activeTier.multiplier;
-                    const active = safeNumber(qty) > 0;
-                    return (
-                      <div className={active ? "line-card active-line" : "line-card"} key={item.id}>
-                        <div className="line-copy">
-                          <strong>{item.name}</strong>
-                          <div className="line-meta">
-                            <span>{item.unit}</span>
-                            <span>{currency.format(item.basePrice * activeTier.multiplier)}</span>
-                            <span>{qty ? currency.format(total) : currency.format(0)}</span>
-                          </div>
-                        </div>
-                        <label className="qty-box">
-                          <span>{formatQtyLabel(item.unit)}</span>
-                          <input className="qty-input" type="number" min="0" step="any" value={qty} onChange={(e) => updateQty(item.id, e.target.value)} />
-                        </label>
-                      </div>
-                    );
-                  })}
+          {activeView === "standard" ? (
+            <>
+              <div className="section-head">
+                <div>
+                  <h2>Standard pricing sheet</h2>
+                  <p className="small-note">Fast-fill layout for on-the-spot quoting. Search, tap quantity, and swipe left for Renaissance.</p>
                 </div>
-              )}
-            </div>
-          ))}
+                <div className="toolbar-buttons inline-actions">
+                  <button className="ghost-btn" onClick={clearAll}>Clear inputs</button>
+                  <button className="ghost-btn" onClick={() => expandAll(true)}>Expand all</button>
+                  <button className="ghost-btn" onClick={() => expandAll(false)}>Collapse all</button>
+                </div>
+              </div>
 
-          <div className="bottom-actions">
-            <button className="ghost-btn" onClick={clearAll}>Clear inputs</button>
-            <button className="ghost-btn" onClick={() => expandAll(true)}>Expand all</button>
-            <button className="ghost-btn" onClick={() => expandAll(false)}>Collapse all</button>
-          </div>
-        </section>
-
-        <aside className="summary-column">
-          {flags.length > 0 && (
-            <section className="flag-list card alert">
-              <h2>Red flags / restrictions</h2>
-              {flags.map((flag) => (
-                <div className="flag" key={`renaissance-${flag}`}>{flag}</div>
+              {filteredCategories.map((cat) => (
+                <div className="category" key={cat.name}>
+                  <button className={activeCategoryNames.has(cat.name) ? "category-toggle active-cat" : "category-toggle"} onClick={() => setExpanded((current) => ({ ...current, [cat.name]: !current[cat.name] }))}>
+                    <strong>{cat.name}</strong>
+                    <span>{expanded[cat.name] ? "Hide" : "Show"}</span>
+                  </button>
+                  {expanded[cat.name] && (
+                    <div className="item-list">
+                      {cat.items.map((item) => {
+                        const qty = lineQtys[item.id] || "";
+                        const total = safeNumber(qty) * item.basePrice * activeTier.multiplier;
+                        const active = safeNumber(qty) > 0;
+                        return (
+                          <div className={active ? "line-card active-line" : "line-card"} key={item.id}>
+                            <div className="line-copy">
+                              <strong>{item.name}</strong>
+                              <div className="line-meta">
+                                <span>{item.unit}</span>
+                                <span>{currency.format(item.basePrice * activeTier.multiplier)}</span>
+                                <span>{qty ? currency.format(total) : currency.format(0)}</span>
+                              </div>
+                            </div>
+                            <label className="qty-box">
+                              <span>{formatQtyLabel(item.unit)}</span>
+                              <input className="qty-input" type="number" inputMode="decimal" min="0" step="any" value={qty} onChange={(e) => updateQty(item.id, e.target.value)} />
+                            </label>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               ))}
-            </section>
-          )}
 
-          <section className="card renaissance-card">
-            <div className="section-head compact-head">
-              <div><h2>Renaissance</h2><p className="small-note">Span logic now follows style, wind, exposure, support rows, and beam/post upgrade choices.</p></div>
-              <button className="ghost-btn" onClick={() => setRenaissanceOpen((value) => !value)}>{renaissanceOpen ? "Hide" : "Show"}</button>
-            </div>
+              {filteredCategories.length === 0 && <p className="small-note">No matching services found for “{searchTerm}”.</p>}
 
-            {renaissanceOpen && (
-              <>
-                <div className="renaissance-grid">
-                  <label>
-                    Style
-                    <select value={renaissance.section} onChange={(e) => setRenaissance((current) => ({ ...current, section: e.target.value }))}>
-                      {Object.keys(renaissanceSectionOptions).map((section) => <option key={section} value={section}>{section}</option>)}
-                    </select>
-                  </label>
-                  <label>
-                    Mount
-                    <select value={renaissance.mount} onChange={(e) => setRenaissance((current) => ({ ...current, mount: e.target.value }))}>
-                      {currentRenaissanceOptions.mounts.map((option) => <option key={option} value={option}>{option}</option>)}
-                    </select>
-                  </label>
-                  {renaissance.section !== "Moderno" && (
+              <div className="bottom-actions">
+                <button className="ghost-btn" onClick={clearAll}>Clear inputs</button>
+                <button className="ghost-btn" onClick={() => expandAll(true)}>Expand all</button>
+                <button className="ghost-btn" onClick={() => expandAll(false)}>Collapse all</button>
+              </div>
+              <div className="pill-row bottom-tier-row">
+                {Object.entries(appData.pricingTiers).map(([key, tier]) => (
+                  <button key={`bottom-${key}`} className={selectedTier === key ? "pill active" : "pill"} onClick={() => setSelectedTier(key)}>{tier.label}</button>
+                ))}
+              </div>
+            </>
+          ) : (
+            <>
+              {flags.length > 0 && (
+                <section className="flag-list card alert inline-alert">
+                  <h2>Red flags / restrictions</h2>
+                  {flags.map((flag) => (
+                    <div className="flag" key={`ren-${flag}`}>{flag}</div>
+                  ))}
+                </section>
+              )}
+              <div className="section-head compact-head">
+                <div><h2>Renaissance</h2><p className="small-note">Premium patio cover pricing. Swipe right to return to the standard sheet.</p></div>
+                <button className="ghost-btn" onClick={() => setRenaissanceOpen((value) => !value)}>{renaissanceOpen ? "Hide" : "Show"}</button>
+              </div>
+
+              {renaissanceOpen && (
+                <>
+                  <div className="renaissance-grid">
                     <label>
-                      End cut
+                      Style
+                      <select value={renaissance.section} onChange={(e) => setRenaissance((current) => ({ ...current, section: e.target.value }))}>
+                        {Object.keys(renaissanceSectionOptions).map((section) => <option key={section} value={section}>{section}</option>)}
+                      </select>
+                    </label>
+                    <label>
+                      Mount
+                      <select value={renaissance.mount} onChange={(e) => setRenaissance((current) => ({ ...current, mount: e.target.value }))}>
+                        {currentRenaissanceOptions.mounts.map((option) => <option key={option} value={option}>{option}</option>)}
+                      </select>
+                    </label>
+                    <label>
+                      Profile
                       <select value={renaissance.profile} onChange={(e) => setRenaissance((current) => ({ ...current, profile: e.target.value }))}>
                         {currentRenaissanceOptions.profiles.map((option) => <option key={option} value={option}>{option}</option>)}
                       </select>
                     </label>
-                  )}
-                  <label>
-                    Width
-                    <select value={renaissance.width} onChange={(e) => setRenaissance((current) => ({ ...current, width: safeNumber(e.target.value) }))}>
-                      {widthOptions.map((value) => <option key={value} value={value}>{value}</option>)}
-                    </select>
-                  </label>
-                  <label>
-                    Projection
-                    <select value={renaissance.projection} onChange={(e) => setRenaissance((current) => ({ ...current, projection: safeNumber(e.target.value) }))}>
-                      {projectionOptions.map((value) => <option key={value} value={value}>{value}</option>)}
-                    </select>
-                  </label>
-                  <label>
-                    Wind speed
-                    <select value={renaissance.windSpeed} onChange={(e) => setRenaissance((current) => ({ ...current, windSpeed: safeNumber(e.target.value) }))}>
-                      {windSpeedOptions.map((value) => <option key={value} value={value}>{value} mph</option>)}
-                    </select>
-                  </label>
-                  <label>
-                    Exposure
-                    <select value={renaissance.exposure} onChange={(e) => setRenaissance((current) => ({ ...current, exposure: e.target.value }))}>
-                      {exposureOptions.map((value) => <option key={value} value={value}>{value}</option>)}
-                    </select>
-                  </label>
-                  <label>
-                    Panel type
-                    <select value={renaissance.panelType} onChange={(e) => setRenaissance((current) => ({ ...current, panelType: e.target.value }))}>
-                      <option value="3standard">3&quot; panel</option>
-                      <option value="6upgraded">6&quot; upgraded panel</option>
-                    </select>
-                  </label>
-                  <label className="check solo-check">
-                    <input
-                      type="checkbox"
-                      checked={renaissance.panelType === "6upgraded" ? true : renaissance.upgradeFoam}
-                      disabled={renaissance.panelType === "6upgraded"}
-                      onChange={(e) => setRenaissance((current) => ({ ...current, upgradeFoam: e.target.checked }))}
-                    />
-                    <span>Add upgraded foam</span>
-                  </label>
-                  <label className="check solo-check">
-                    <input
-                      type="checkbox"
-                      checked={renaissance.panelType === "6upgraded" ? true : renaissance.upgrade032}
-                      disabled={renaissance.panelType === "6upgraded"}
-                      onChange={(e) => setRenaissance((current) => ({ ...current, upgrade032: e.target.checked }))}
-                    />
-                    <span>Add .032 skin</span>
-                  </label>
-                  <label className="check solo-check">
-                    <input type="checkbox" checked={renaissance.roofColor} onChange={(e) => setRenaissance((current) => ({ ...current, roofColor: e.target.checked }))} />
-                    <span>Add roof color</span>
-                  </label>
-                  <label>
-                    Required / quoted posts
-                    <input type="number" min="0" value={renaissance.postCountOverride || renaissanceCalc.postCountRequired || 0} onChange={(e) => setRenaissance((current) => ({ ...current, postCountOverride: e.target.value }))} />
-                  </label>
-                  <label>
-                    Beam length (auto)
-                    <input type="number" min="0" value={renaissanceCalc.beamLength} readOnly />
-                  </label>
-                  <label>
-                    Fan beams
-                    <input type="number" min="0" value={renaissance.fanBeams} onChange={(e) => setRenaissance((current) => ({ ...current, fanBeams: e.target.value }))} />
-                  </label>
-                  <label>
-                    Fan beam unit
-                    <input type="text" value={renaissanceCalc.fanBeamCount > 0 && renaissanceCalc.fanBeamUnit ? currency.format(renaissanceCalc.fanBeamUnit * renaissanceCalc.tierMultiplier) : "$0.00"} readOnly />
-                  </label>
-                  <label>
-                    Post upgrade
-                    <select value={renaissance.postUpgrade} onChange={(e) => setRenaissance((current) => ({ ...current, postUpgrade: e.target.value }))}>
-                      <option value="none">Standard</option>
-                      <option value="hd">HD</option>
-                      <option value="wide">Wide</option>
-                      <option value="wideInsert">Wide + Insert</option>
-                    </select>
-                  </label>
-                  <label>
-                    Beam / post upgrade
-                    <select value={renaissance.beamUpgrade} onChange={(e) => setRenaissance((current) => ({ ...current, beamUpgrade: e.target.value, postUpgrade: e.target.value }))}>
-                      {[["none", "Standard"], ["hd", "HD"], ["wide", "Wide"], ["wideInsert", "Wide + Insert"]].map(([value, label]) => (
-                        <option key={value} value={value} disabled={!renaissanceCalc.validUpgradeOptions.includes(value)}>{label}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Added support beam/post rows
-                    <select value={renaissance.supportBeams} onChange={(e) => setRenaissance((current) => ({ ...current, supportBeams: safeNumber(e.target.value) }))}>
-                      {[0, 1, 2, 3].map((value) => <option key={value} value={value}>{value}</option>)}
-                    </select>
-                  </label>
-                  <label>
-                    Deduct posts
-                    <input type="number" min="0" value={renaissance.deductPosts} onChange={(e) => setRenaissance((current) => ({ ...current, deductPosts: e.target.value }))} />
-                  </label>
-                </div>
+                    <label>
+                      Width
+                      <input type="number" inputMode="decimal" min="0" max="40" step="1" value={renaissance.width} onChange={(e) => setRenaissance((current) => ({ ...current, width: safeNumber(e.target.value) }))} />
+                    </label>
+                    <label>
+                      Projection
+                      <input type="number" inputMode="decimal" min="0" max="30" step="1" value={renaissance.projection} onChange={(e) => setRenaissance((current) => ({ ...current, projection: safeNumber(e.target.value) }))} />
+                    </label>
+                    <label>
+                      Front overhang
+                      <select value={renaissance.frontOverhang} onChange={(e) => setRenaissance((current) => ({ ...current, frontOverhang: safeNumber(e.target.value) }))}>
+                        {[0,1,2].map((value) => <option key={value} value={value}>{value}'</option>)}
+                      </select>
+                    </label>
+                    <label>
+                      Side overhang (each side)
+                      <select value={renaissance.sideOverhang} onChange={(e) => setRenaissance((current) => ({ ...current, sideOverhang: safeNumber(e.target.value) }))}>
+                        {[0,1,2].map((value) => <option key={value} value={value}>{value}'</option>)}
+                      </select>
+                    </label>
+                    <label>
+                      Wind speed
+                      <select value={renaissance.windSpeed} onChange={(e) => setRenaissance((current) => ({ ...current, windSpeed: safeNumber(e.target.value) }))}>
+                        {windSpeedOptions.map((option) => <option key={option} value={option}>{option} mph</option>)}
+                      </select>
+                    </label>
+                    <label>
+                      Exposure
+                      <select value={renaissance.exposure} onChange={(e) => setRenaissance((current) => ({ ...current, exposure: e.target.value }))}>
+                        {exposureOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                      </select>
+                    </label>
+                    <label>
+                      Panel type
+                      <select value={renaissance.panelType} onChange={(e) => setRenaissance((current) => ({ ...current, panelType: e.target.value }))}>
+                        <option value="3standard">3" standard</option>
+                        <option value="6upgraded">6" upgraded</option>
+                      </select>
+                    </label>
+                    <label className="check inline-check">
+                      <input type="checkbox" checked={renaissance.upgradeFoam} onChange={(e) => setRenaissance((current) => ({ ...current, upgradeFoam: e.target.checked }))} disabled={renaissance.panelType === "6upgraded"} />
+                      <span>Upgrade foam</span>
+                    </label>
+                    <label className="check inline-check">
+                      <input type="checkbox" checked={renaissance.upgrade032} onChange={(e) => setRenaissance((current) => ({ ...current, upgrade032: e.target.checked }))} disabled={renaissance.panelType === "6upgraded"} />
+                      <span>.032 skin</span>
+                    </label>
+                    <label className="check inline-check">
+                      <input type="checkbox" checked={renaissance.roofColor} onChange={(e) => setRenaissance((current) => ({ ...current, roofColor: e.target.checked }))} />
+                      <span>Roof color</span>
+                    </label>
+                    <label>
+                      Post count override
+                      <input type="number" inputMode="decimal" min="0" value={renaissance.postCountOverride || renaissanceCalc.postCountRequired || 0} onChange={(e) => setRenaissance((current) => ({ ...current, postCountOverride: e.target.value }))} />
+                    </label>
+                    <label>
+                      Fan beams
+                      <input type="number" inputMode="decimal" min="0" value={renaissance.fanBeams} onChange={(e) => setRenaissance((current) => ({ ...current, fanBeams: e.target.value }))} />
+                    </label>
+                    <label>
+                      Front/main upgrade
+                      <select value={renaissance.beamUpgrade} onChange={(e) => setRenaissance((current) => ({ ...current, beamUpgrade: e.target.value, postUpgrade: e.target.value }))}>
+                        {[ ["none", "Standard"], ["hd", "HD"], ["wide", "Wide"], ["wideInsert", "Wide + Insert"] ].map(([value, label]) => (
+                          <option key={value} value={value} disabled={!renaissanceCalc.validUpgradeOptions.includes(value)}>{label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Added support rows
+                      <select value={renaissance.supportBeams} onChange={(e) => setRenaissance((current) => ({ ...current, supportBeams: safeNumber(e.target.value) }))}>
+                        {[0,1,2,3].map((value) => <option key={value} value={value}>{value}</option>)}
+                      </select>
+                    </label>
+                    <label>
+                      Support row upgrade
+                      <select value={renaissance.supportUpgrade} onChange={(e) => setRenaissance((current) => ({ ...current, supportUpgrade: e.target.value }))}>
+                        {[ ["none", "Standard"], ["hd", "HD"], ["wide", "Wide"], ["wideInsert", "Wide + Insert"] ].map(([value, label]) => (
+                          <option key={value} value={value}>{label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Deduct posts
+                      <input type="number" inputMode="decimal" min="0" value={renaissance.deductPosts} onChange={(e) => setRenaissance((current) => ({ ...current, deductPosts: e.target.value }))} />
+                    </label>
+                  </div>
 
-                <div className="renaissance-summary">
-                  <div className="summary-row"><span>Style</span><strong>{renaissanceCalc.key}</strong></div>
-                  <div className="summary-row"><span>Wind / exposure</span><strong>{renaissanceCalc.windSpeed} mph · {renaissanceCalc.exposure}</strong></div>
-                  <div className="summary-row"><span>Required posts</span><strong>{renaissanceCalc.postCountRequired || 0}</strong></div>
-                  <div className="summary-row"><span>Support beam/post rows</span><strong>{renaissanceCalc.supportBeams || 0}</strong></div>
-                  <div className="summary-row"><span>Effective projection per span</span><strong>{renaissanceCalc.effectiveProjection ? `${renaissanceCalc.effectiveProjection.toFixed(2)}'` : "0'"}</strong></div>
-                  <div className="summary-row"><span>Allowed beam span now</span><strong>{renaissanceCalc.allowedMainSpan ? `${renaissanceCalc.allowedMainSpan.toFixed(2)}'` : "0'"}</strong></div>
-                  <div className="summary-row"><span>Max width with current setup</span><strong>{renaissanceCalc.maxWidthWithCurrentSetup ? `${renaissanceCalc.maxWidthWithCurrentSetup.toFixed(2)}'` : "0'"}</strong></div>
-                  <div className="summary-row"><span>Roof sqft</span><strong>{renaissanceCalc.rsqft || 0}</strong></div>
-                  <div className="summary-row"><span>Base price</span><strong>{currency.format(renaissanceCalc.baseTiered)}</strong></div>
-                  {renaissanceCalc.adders.map((adder) => <div className="summary-row" key={adder.label}><span>{adder.label}</span><strong>{currency.format(adder.amount)}</strong></div>)}
-                  <div className="summary-row"><span>Panel setup</span><strong>{renaissanceCalc.panelMeta.label}</strong></div>
-                  <div className="summary-row total"><span>Renaissance total</span><strong>{currency.format(renaissanceCalc.total)}</strong></div>
-                </div>
-              </>
-            )}
-          </section>
+                  <div className="renaissance-summary">
+                    <div className="summary-row"><span>Style</span><strong>{renaissanceCalc.key}</strong></div>
+                    <div className="summary-row"><span>Actual size</span><strong>{renaissanceCalc.width || 0}' x {renaissanceCalc.projection || 0}'</strong></div>
+                    <div className="summary-row"><span>Framed size</span><strong>{renaissanceCalc.framedWidth || 0}' x {renaissanceCalc.framedProjection || 0}'</strong></div>
+                    <div className="summary-row"><span>Wind / exposure</span><strong>{renaissanceCalc.windSpeed} mph · {renaissanceCalc.exposure}</strong></div>
+                    <div className="summary-row"><span>Required posts</span><strong>{renaissanceCalc.postCountRequired || 0}</strong></div>
+                    <div className="summary-row"><span>Support beam/post rows</span><strong>{renaissanceCalc.supportBeams || 0}</strong></div>
+                    <div className="summary-row"><span>Effective projection per span</span><strong>{renaissanceCalc.effectiveProjection ? `${renaissanceCalc.effectiveProjection.toFixed(2)}'` : "0'"}</strong></div>
+                    <div className="summary-row"><span>Allowed beam span now</span><strong>{renaissanceCalc.allowedMainSpan ? `${renaissanceCalc.allowedMainSpan.toFixed(2)}'` : "0'"}</strong></div>
+                    <div className="summary-row"><span>Max width with current setup</span><strong>{renaissanceCalc.maxWidthWithCurrentSetup ? `${renaissanceCalc.maxWidthWithCurrentSetup.toFixed(2)}'` : "0'"}</strong></div>
+                    <div className="summary-row"><span>Roof sqft</span><strong>{renaissanceCalc.rsqft || 0}</strong></div>
+                    <div className="summary-row"><span>Base price</span><strong>{currency.format(renaissanceCalc.baseTiered)}</strong></div>
+                    {renaissanceCalc.adders.map((adder) => <div className="summary-row" key={adder.label}><span>{adder.label}</span><strong>{currency.format(adder.amount)}</strong></div>)}
+                    <div className="summary-row"><span>Panel setup</span><strong>{renaissanceCalc.panelMeta.label}</strong></div>
+                    <div className="summary-row total"><span>Renaissance total</span><strong>{currency.format(renaissanceCalc.total)}</strong></div>
+                  </div>
+                </>
+              )}
+              <div className="pill-row bottom-tier-row">
+                {Object.entries(appData.pricingTiers).map(([key, tier]) => (
+                  <button key={`r-bottom-${key}`} className={selectedTier === key ? "pill active" : "pill"} onClick={() => setSelectedTier(key)}>{tier.label}</button>
+                ))}
+              </div>
+            </>
+          )}
+        </section>
 
+        <aside className="summary-column">
           <section className="card sticky-card">
             <div className="section-head compact-head">
               <div>
@@ -929,8 +1055,12 @@ function App() {
             <div className="summary-row"><span>Subtotal</span><strong>{currency.format(subtotal)}</strong></div>
             <div className="summary-row"><span>Sales tax on 40%</span><strong>{currency.format(salesTax)}</strong></div>
             <div className="summary-row"><span>Permitting + location fees</span><strong>{currency.format(permittingFee)}</strong></div>
+            <label className="check inline-check summary-check">
+              <input type="checkbox" checked={settings.removePermit} onChange={(e) => setSettings((current) => ({ ...current, removePermit: e.target.checked }))} />
+              <span>Remove permit cost</span>
+            </label>
             <div className="summary-row"><span>Optional deposit</span><strong>{currency.format(depositAmount)}</strong></div>
-                        <div className="summary-row total"><span>Total no financing</span><strong>{currency.format(totalNoFinancing)}</strong></div>
+            {settings.showNoFinancingTotal && <div className="summary-row total"><span>Total no financing</span><strong>{currency.format(totalNoFinancing)}</strong></div>}
 
             <div className="summary-section">
               <div className="section-head compact-head no-margin-bottom">
@@ -944,19 +1074,12 @@ function App() {
               </div>
               <label>
                 Deposit / cash down
-                <input type="number" min="0" step="0.01" value={settings.depositAmount} onChange={(e) => setSettings((current) => ({ ...current, depositAmount: e.target.value }))} />
+                <input type="number" inputMode="decimal" min="0" step="0.01" value={settings.depositAmount} onChange={(e) => setSettings((current) => ({ ...current, depositAmount: e.target.value }))} />
               </label>
               {financingOpen && (
                 <div className="plan-list compact-plan-list">
                   {financingPlans.map((plan) => (
-                    <button
-                      key={plan.id}
-                      className={selectedPlanId === plan.id ? "plan-card active" : "plan-card"}
-                      onClick={() => {
-                        setSelectedPlanId(plan.id);
-                        setFinancingOpen(false);
-                      }}
-                    >
+                    <button key={plan.id} className={selectedPlanId === plan.id ? "plan-card active" : "plan-card"} onClick={() => { setSelectedPlanId(plan.id); setFinancingOpen(false); }}>
                       <strong>{plan.label}</strong>
                       <span>{plan.term}</span>
                       <span>{plan.apr}</span>
@@ -974,13 +1097,13 @@ function App() {
           </section>
 
           {settings.showCommission && (
-          <section className="commission-box card bottom-commission">
-            <div>
-              <span>Commission at this tier</span>
-              <strong>{currency.format(commissionAmount)}</strong>
-            </div>
-            <p>{selectedTier === "volume" ? "Volume tier counts revenue only." : `Stay at or move up tiers to improve payout on the same sale.`}</p>
-          </section>
+            <section className="commission-box card bottom-commission">
+              <div>
+                <span>Commission at this tier</span>
+                <strong>{currency.format(commissionAmount)}</strong>
+              </div>
+              <p>{selectedTier === "volume" ? "Volume tier counts revenue only." : `Stay at or move up tiers to improve payout on the same sale.`}</p>
+            </section>
           )}
         </aside>
       </div>
@@ -991,7 +1114,7 @@ function App() {
             <div className="section-head compact-head">
               <div>
                 <h2>Settings & help</h2>
-                <p className="small-note">Theme, tutorial, and add-to-home-screen instructions.</p>
+                <p className="small-note">Theme, totals visibility, tutorial, and add-to-home-screen instructions.</p>
               </div>
               <button className="ghost-btn" onClick={() => setSettingsOpen(false)}>Close</button>
             </div>
@@ -1007,16 +1130,20 @@ function App() {
                 <input type="checkbox" checked={settings.showCommission} onChange={(e) => setSettings((current) => ({ ...current, showCommission: e.target.checked }))} />
                 <span>Show commission boxes</span>
               </label>
+              <label className="check">
+                <input type="checkbox" checked={settings.showNoFinancingTotal} onChange={(e) => setSettings((current) => ({ ...current, showNoFinancingTotal: e.target.checked }))} />
+                <span>Show total no financing</span>
+              </label>
             </div>
 
             <div className="help-block">
               <h3>How to use</h3>
               <ol>
                 <li>Select the sales sheet tier first.</li>
-                <li>Open only the category you need and enter quantity.</li>
-                <li>Use Renaissance only when that cover is being quoted.</li>
+                <li>Use the search bar to jump straight to the service you need.</li>
+                <li>Swipe left or tap Renaissance view when quoting patio covers.</li>
+                <li>Front and side overhangs reduce the framed span used for the structural checks.</li>
                 <li>Add a deposit only to reduce the financed balance. It does not change the quoted sale amount.</li>
-                <li>Watch the red flags for missing add-ons and restrictions.</li>
               </ol>
             </div>
 
