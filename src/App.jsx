@@ -727,31 +727,12 @@ function App() {
         </div>
       </header>
 
-      <section className="hero-strip">
-        <div className="hero-stat card">
-          <span>Tier</span>
-          <strong>{activeTier.label}</strong>
-          <small>{lineCount} active item{lineCount === 1 ? "" : "s"}</small>
-        </div>
-        {settings.showNoFinancingTotal && (
-          <div className="hero-stat card hero-stat-accent">
-            <span>Total no financing</span>
-            <strong>{currency.format(totalNoFinancing)}</strong>
-            <small>Tax and permit included</small>
-          </div>
-        )}
-        <div className="hero-stat card">
-          <span>Monthly payment</span>
-          <strong>{currency.format(monthlyPayment)}/mo</strong>
-          <small>{selectedPlan.label}</small>
-        </div>
-      </section>
 
       <section className="toolbar card">
         <div className="section-head compact-head">
           <div>
-            <h2>Sales sheet tier</h2>
-            <p className="small-note">Global tier controls both the standard sheet and Renaissance pricing.</p>
+            <h2>Tier</h2>
+            <p className="small-note">Global tier controls both Standard and Renaissance pricing.</p>
           </div>
           <button className="ghost-btn" onClick={() => setToolbarOpen((value) => !value)}>{toolbarOpen ? "Hide" : "Show"}</button>
         </div>
@@ -769,19 +750,6 @@ function App() {
               <button className={activeView === "renaissance" ? "pill active" : "pill"} onClick={() => setActiveView("renaissance")}>Renaissance</button>
             </div>
             <div className="toolbar-meta toolbar-meta-wide">
-              <div className="stat-box">
-                <span>Pricing tier</span>
-                <strong>{activeTier.label}</strong>
-              </div>
-              <label>
-                Search services
-                <input
-                  type="text"
-                  placeholder="Search concrete, screen, deck, permit..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
-              </label>
               <div className="location-grid">
                 <label>
                   City
@@ -844,6 +812,18 @@ function App() {
                   <button className="ghost-btn" onClick={() => expandAll(true)}>Expand all</button>
                   <button className="ghost-btn" onClick={() => expandAll(false)}>Collapse all</button>
                 </div>
+              </div>
+
+              <div className="standard-search-row">
+                <label className="standard-search-label">
+                  Search services
+                  <input
+                    type="text"
+                    placeholder="Search concrete, screen, deck, permit..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                  />
+                </label>
               </div>
 
               {filteredCategories.map((cat) => (
@@ -1043,7 +1023,9 @@ function App() {
           )}
         </section>
 
-        <aside className="summary-column">
+      </div>
+
+              <aside className="summary-column">
           <section className="card sticky-card">
             <div className="section-head compact-head">
               <div>
@@ -1106,7 +1088,6 @@ function App() {
             </section>
           )}
         </aside>
-      </div>
 
       {settingsOpen && (
         <div className="modal-backdrop" onClick={() => setSettingsOpen(false)}>
