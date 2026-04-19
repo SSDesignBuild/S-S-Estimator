@@ -51,3 +51,13 @@ Not needed for version 1. Add Supabase later only if you want:
 ## Source references used for this build
 - Base 5 sheet pricing from the uploaded `Estimating Template - 5.pdf`.
 - Renaissance 40 matrix and add-on pricing from the uploaded `Renaissance 40 - Sell Price.pdf`.
+
+
+## Supabase environment variables
+
+Create a `.env` file locally or set these in Netlify:
+
+```
+VITE_SUPABASE_URL=your-project-url
+VITE_SUPABASE_ANON_KEY=your-publishable-key
+```
