@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./lib/supabase";
+import { sendQuoteToGhl } from "./lib/ghl";
 import { appData } from "./data";
 
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
@@ -611,6 +612,8 @@ function App() {
   const [quotesLoading, setQuotesLoading] = useState(false);
   const [saveLoading, setSaveLoading] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
+  const [ghlSending, setGhlSending] = useState(false);
+  const [ghlMessage, setGhlMessage] = useState("");
   const [selectedQuoteId, setSelectedQuoteId] = useState(null);
   const [selectedQuoteStatus, setSelectedQuoteStatus] = useState("draft");
   const [quoteScope, setQuoteScope] = useState("mine");
@@ -625,7 +628,7 @@ function App() {
   const [activeView, setActiveView] = useState("standard");
   const [searchTerm, setSearchTerm] = useState("");
   const [pricingOverrides, setPricingOverrides] = useState({ appDefaults: {}, tierMultipliers: {}, linePrices: {}, customServices: [], renaissanceTablePercent: 0, renaissanceAddOns: {} });
-  const [pricingDraft, setPricingDraft] = useState({ appDefaults: {}, tierMultipliers: {}, linePrices: {}, customServices: [], renaissanceTablePercent: 0, renaissanceAddOns: {} });
+  const [pricingDraft, setPricingDraft] = useState({ appDefaults: {}, tierMultipliers: {}, linePrices: {}, customServices: [], renaissanceTablePercent: 0, renaissanceAddOns: {}, ghlSettings: {} });
   const [pricingLoading, setPricingLoading] = useState(false);
   const [pricingSaving, setPricingSaving] = useState(false);
   const [pricingMessage, setPricingMessage] = useState("");
@@ -1070,6 +1073,7 @@ function App() {
     setSelectedQuoteId(null);
     setSelectedQuoteStatus("draft");
     setSaveMessage("");
+    setGhlMessage("");
     setSettings((current) => ({ ...current, ...defaultSettings, darkMode: current.darkMode, showCommission: current.showCommission, showNoFinancingTotal: current.showNoFinancingTotal }));
   }
 
@@ -1081,7 +1085,7 @@ function App() {
     const { data, error } = await supabase
       .from("pricing_settings")
       .select("setting_key, setting_value")
-      .in("setting_key", ["app_defaults", "tier_multipliers", "line_price_overrides", "custom_services", "renaissance_table_percent", "renaissance_addon_overrides"]);
+      .in("setting_key", ["app_defaults", "tier_multipliers", "line_price_overrides", "custom_services", "renaissance_table_percent", "renaissance_addon_overrides", "ghl_settings"]);
 
     if (error) {
       console.error("Load pricing settings failed", error);
@@ -1090,7 +1094,7 @@ function App() {
       return;
     }
 
-    const next = { appDefaults: {}, tierMultipliers: {}, linePrices: {}, customServices: [], renaissanceTablePercent: 0, renaissanceAddOns: {} };
+    const next = { appDefaults: {}, tierMultipliers: {}, linePrices: {}, customServices: [], renaissanceTablePercent: 0, renaissanceAddOns: {}, ghlSettings: {} };
     (data || []).forEach((row) => {
       if (row.setting_key === "app_defaults" && row.setting_value) next.appDefaults = row.setting_value;
       if (row.setting_key === "tier_multipliers" && row.setting_value) next.tierMultipliers = row.setting_value;
@@ -1098,6 +1102,7 @@ function App() {
       if (row.setting_key === "custom_services" && row.setting_value) next.customServices = Array.isArray(row.setting_value) ? row.setting_value : [];
       if (row.setting_key === "renaissance_table_percent" && row.setting_value != null) next.renaissanceTablePercent = safeNumber(row.setting_value);
       if (row.setting_key === "renaissance_addon_overrides" && row.setting_value) next.renaissanceAddOns = row.setting_value;
+      if (row.setting_key === "ghl_settings" && row.setting_value) next.ghlSettings = row.setting_value;
     });
 
     setPricingOverrides(next);
@@ -1139,13 +1144,22 @@ function App() {
       beamUpgradePerFoot: Object.fromEntries(Object.entries(pricingDraft.renaissanceAddOns?.beamUpgradePerFoot || {}).map(([key, value]) => [key, safeNumber(value)]))
     };
 
+    const parsedGhlSettings = {
+      enabled: Boolean(pricingDraft.ghlSettings?.enabled),
+      locationId: String(pricingDraft.ghlSettings?.locationId || "").trim(),
+      defaultPipelineId: String(pricingDraft.ghlSettings?.defaultPipelineId || "").trim(),
+      defaultOpportunityStageId: String(pricingDraft.ghlSettings?.defaultOpportunityStageId || "").trim(),
+      companyName: String(pricingDraft.ghlSettings?.companyName || "S&S Design Build").trim() || "S&S Design Build"
+    };
+
     const rows = [
       { setting_key: "app_defaults", setting_value: parsedDefaults, updated_by: session.user.id },
       { setting_key: "tier_multipliers", setting_value: parsedTierMultipliers, updated_by: session.user.id },
       { setting_key: "line_price_overrides", setting_value: parsedLinePrices, updated_by: session.user.id },
       { setting_key: "custom_services", setting_value: parsedCustomServices, updated_by: session.user.id },
       { setting_key: "renaissance_table_percent", setting_value: parsedRenaissanceTablePercent, updated_by: session.user.id },
-      { setting_key: "renaissance_addon_overrides", setting_value: parsedRenaissanceAddOns, updated_by: session.user.id }
+      { setting_key: "renaissance_addon_overrides", setting_value: parsedRenaissanceAddOns, updated_by: session.user.id },
+      { setting_key: "ghl_settings", setting_value: parsedGhlSettings, updated_by: session.user.id }
     ];
 
     const { error } = await supabase.from("pricing_settings").upsert(rows, { onConflict: "setting_key" });
@@ -1157,7 +1171,7 @@ function App() {
       return;
     }
 
-    setPricingOverrides({ appDefaults: parsedDefaults, tierMultipliers: parsedTierMultipliers, linePrices: parsedLinePrices, customServices: parsedCustomServices, renaissanceTablePercent: parsedRenaissanceTablePercent, renaissanceAddOns: parsedRenaissanceAddOns });
+    setPricingOverrides({ appDefaults: parsedDefaults, tierMultipliers: parsedTierMultipliers, linePrices: parsedLinePrices, customServices: parsedCustomServices, renaissanceTablePercent: parsedRenaissanceTablePercent, renaissanceAddOns: parsedRenaissanceAddOns, ghlSettings: parsedGhlSettings });
     setPricingSaving(false);
     setPricingMessage("Admin pricing saved to Supabase.");
   }
@@ -1227,7 +1241,7 @@ function App() {
     setQuotesLoading(true);
     let query = supabase
       .from("quotes")
-      .select("id, created_by, customer_name, customer_email, customer_phone, financing_price, cash_price, tier, status, updated_at")
+      .select("id, created_by, customer_name, customer_email, customer_phone, financing_price, cash_price, tier, status, updated_at, ghl_contact_id, ghl_estimate_id")
       .order("updated_at", { ascending: false })
       .limit(100);
 
@@ -1310,6 +1324,110 @@ function App() {
     setSaveMessage("Quote loaded.");
   }
 
+  function buildQuoteLineRows() {
+    const rows = activeItems
+      .map((item) => ({
+        category: item.category || "General",
+        service_name: item.name || "Line item",
+        unit: item.unit || null,
+        quantity: Number.isFinite(+item.qty) ? +item.qty : 0,
+        unit_price: Number.isFinite(item.displayPrice) ? +item.displayPrice.toFixed(2) : 0,
+        line_total: Number.isFinite(item.extended) ? +item.extended.toFixed(2) : 0,
+        source_type: "standard"
+      }))
+      .filter((row) => row.quantity > 0 || row.line_total > 0);
+
+    if (renaissanceCalc.total > 0) {
+      rows.push({
+        category: "Renaissance",
+        service_name: `${renaissanceCalc.key} ${renaissanceCalc.width}' x ${renaissanceCalc.projection}'`,
+        unit: "Each",
+        quantity: 1,
+        unit_price: +renaissanceCalc.total.toFixed(2),
+        line_total: +renaissanceCalc.total.toFixed(2),
+        source_type: "renaissance"
+      });
+      renaissanceCalc.adders.forEach((adder) => {
+        if (!Number.isFinite(adder.amount) || adder.amount <= 0) return;
+        rows.push({
+          category: "Renaissance",
+          service_name: adder.label,
+          unit: "Each",
+          quantity: 1,
+          unit_price: +adder.amount.toFixed(2),
+          line_total: +adder.amount.toFixed(2),
+          source_type: "renaissance"
+        });
+      });
+    }
+
+    return rows;
+  }
+
+  async function sendSelectedQuoteToGhl() {
+    setGhlMessage("");
+    let quoteId = selectedQuoteId;
+    if (!quoteId) {
+      await saveQuote();
+      quoteId = selectedQuoteId;
+    }
+
+    if (!quoteId) {
+      setGhlMessage("Save the quote first, then send it to GoHighLevel.");
+      return;
+    }
+
+    setGhlSending(true);
+    const ghlSettings = pricingOverrides?.ghlSettings || {};
+    const payload = {
+      quoteId,
+      customer: customer,
+      lineItems: buildQuoteLineRows(),
+      totals: {
+        subtotal: +subtotal.toFixed(2),
+        tax: +salesTax.toFixed(2),
+        permitFee: +permittingFee.toFixed(2),
+        cashPrice: +totalNoFinancing.toFixed(2),
+        financingPrice: +financedSaleAmount.toFixed(2),
+        financedAmount: +financedBase.toFixed(2),
+        monthlyPayment: +monthlyPayment.toFixed(2)
+      },
+      quoteMeta: {
+        tier: selectedTier,
+        financingPlanName: selectedPlan?.label || null,
+        city: settings.city || null,
+        county: settings.county || null,
+        locationId: ghlSettings.locationId || null,
+        pipelineId: ghlSettings.defaultPipelineId || null,
+        opportunityStageId: ghlSettings.defaultOpportunityStageId || null,
+        companyName: ghlSettings.companyName || "S&S Design Build"
+      }
+    };
+
+    const { data, error } = await sendQuoteToGhl(supabase, payload);
+    if (error) {
+      setGhlSending(false);
+      setGhlMessage(error);
+      return;
+    }
+
+    const updatePayload = {
+      ghl_contact_id: data?.contactId || null,
+      ghl_estimate_id: data?.estimateId || null,
+      status: data?.estimateId ? "sent" : selectedQuoteStatus
+    };
+
+    const { error: updateError } = await supabase.from("quotes").update(updatePayload).eq("id", quoteId);
+    setGhlSending(false);
+    if (updateError) {
+      setGhlMessage(`Sent to GoHighLevel, but could not store IDs: ${formatSupabaseError(updateError, "unknown error")}`);
+    } else {
+      if (updatePayload.status) setSelectedQuoteStatus(updatePayload.status);
+      await refreshSavedQuotes();
+      setGhlMessage(data?.message || "Quote sent to GoHighLevel.");
+    }
+  }
+
   async function saveQuote() {
     if (!session?.user?.id) return;
     setSaveLoading(true);
@@ -1350,41 +1468,7 @@ function App() {
       status: selectedQuoteStatus || "draft"
     };
 
-    const lineRows = activeItems
-      .map((item) => ({
-        category: item.category || "General",
-        service_name: item.name || "Line item",
-        unit: item.unit || null,
-        quantity: Number.isFinite(+item.qty) ? +item.qty : 0,
-        unit_price: Number.isFinite(item.displayPrice) ? +item.displayPrice.toFixed(2) : 0,
-        line_total: Number.isFinite(item.extended) ? +item.extended.toFixed(2) : 0,
-        source_type: "standard"
-      }))
-      .filter((row) => row.quantity > 0 || row.line_total > 0);
-
-    if (renaissanceCalc.total > 0) {
-      lineRows.push({
-        category: "Renaissance",
-        service_name: `${renaissanceCalc.key} ${renaissanceCalc.width}' x ${renaissanceCalc.projection}'`,
-        unit: "Each",
-        quantity: 1,
-        unit_price: +renaissanceCalc.total.toFixed(2),
-        line_total: +renaissanceCalc.total.toFixed(2),
-        source_type: "renaissance"
-      });
-      renaissanceCalc.adders.forEach((adder) => {
-        if (!Number.isFinite(adder.amount) || adder.amount <= 0) return;
-        lineRows.push({
-          category: "Renaissance",
-          service_name: adder.label,
-          unit: "Each",
-          quantity: 1,
-          unit_price: +adder.amount.toFixed(2),
-          line_total: +adder.amount.toFixed(2),
-          source_type: "renaissance"
-        });
-      });
-    }
+    const lineRows = buildQuoteLineRows();
 
     const { error: profileError } = await supabase.from("profiles").upsert({
       id: session.user.id,
@@ -2105,6 +2189,7 @@ function App() {
               <div className="toolbar-buttons inline-actions">
                 <button className="ghost-btn" onClick={saveQuote} disabled={saveLoading}>{saveLoading ? "Saving…" : selectedQuoteId ? "Update" : "Save Quote"}</button>
                 <button className="ghost-btn" onClick={copySummary}>Copy</button>
+                <button className="ghost-btn" onClick={sendSelectedQuoteToGhl} disabled={ghlSending || !(pricingOverrides?.ghlSettings?.enabled)}> {ghlSending ? "Sending…" : "Send to GoHighLevel"}</button>
                 <button className="ghost-btn danger-btn" onClick={deleteSelectedQuote}>Delete</button>
               </div>
             </div>
@@ -2123,6 +2208,7 @@ function App() {
               </label>
             </div>
             {saveMessage ? <p className="small-note success-note">{saveMessage}</p> : null}
+            {ghlMessage ? <p className="small-note success-note">{ghlMessage}</p> : null}
             <div className="quote-status-strip">
               <span className={`status-pill status-${selectedQuoteStatus}`}>Status: {selectedQuoteStatus}</span>
               <div className="status-actions">
@@ -2131,6 +2217,7 @@ function App() {
                 ))}
               </div>
             </div>
+            {selectedQuoteId ? <div className="ghl-link-box small-note">GoHighLevel contact ID: {savedQuotes.find((q) => q.id === selectedQuoteId)?.ghl_contact_id || "Not sent yet"} · Estimate ID: {savedQuotes.find((q) => q.id === selectedQuoteId)?.ghl_estimate_id || "Not sent yet"}</div> : null}
             <div className="summary-row"><span>Subtotal</span><strong>{currency.format(subtotal)}</strong></div>
             <div className="summary-row"><span>Sales tax on 40%</span><strong>{currency.format(salesTax)}</strong></div>
             <div className="summary-row"><span>Permitting + location fees</span><strong>{currency.format(permittingFee)}</strong></div>
@@ -2215,6 +2302,7 @@ function App() {
                     <strong>{currency.format(quote.financing_price || quote.cash_price || 0)}</strong>
                     <span>{quote.tier} · {new Date(quote.updated_at).toLocaleDateString()}</span>
                     <span className={`status-pill mini status-${quote.status || "draft"}`}>{quote.status || "draft"}</span>
+                    {quote.ghl_estimate_id ? <span className="owner-line">GHL linked</span> : null}
                   </div>
                 </button>
               ))}
