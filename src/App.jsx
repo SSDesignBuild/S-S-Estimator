@@ -954,6 +954,33 @@ function App() {
     refreshSavedQuotes();
   }, [session?.user?.id, currentRole, permissions.canUseEstimator]);
 
+
+
+  async function refreshSavedQuotes() {
+    if (!session?.user?.id) {
+      setSavedQuotes([]);
+      setQuotesLoading(false);
+      return;
+    }
+
+    setQuotesLoading(true);
+    const { data, error } = await supabase
+      .from("quotes")
+      .select("id, customer_name, customer_email, customer_phone, financing_price, cash_price, tier, updated_at")
+      .order("updated_at", { ascending: false })
+      .limit(50);
+
+    if (error) {
+      console.error("Refresh saved quotes failed", error);
+      setSavedQuotes([]);
+      setQuotesLoading(false);
+      return;
+    }
+
+    setSavedQuotes(data || []);
+    setQuotesLoading(false);
+  }
+
   function hydrateQuoteSnapshot(snapshot) {
     setSelectedTier(snapshot?.selectedTier && appData.pricingTiers[snapshot.selectedTier] ? snapshot.selectedTier : "tier5");
     setLineQtys({ ...defaultLineState, ...(snapshot?.lineQtys || {}) });
