@@ -557,6 +557,9 @@ function App() {
   const [saveLoading, setSaveLoading] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
   const [selectedQuoteId, setSelectedQuoteId] = useState(null);
+  const [selectedQuoteStatus, setSelectedQuoteStatus] = useState("draft");
+  const [quoteScope, setQuoteScope] = useState("mine");
+  const [quoteStatusFilter, setQuoteStatusFilter] = useState("all");
   const [selectedPlanId, setSelectedPlanId] = useState(financingPlans[0].id);
   const [renaissance, setRenaissance] = useState(defaultRenaissance);
   const [expanded, setExpanded] = useState(defaultExpanded);
@@ -668,6 +671,9 @@ function App() {
       if (["standard", "renaissance"].includes(parsed.activeView)) setActiveView(parsed.activeView);
       if (typeof parsed.searchTerm === "string") setSearchTerm(parsed.searchTerm);
       if (typeof parsed.selectedQuoteId === "string" || parsed.selectedQuoteId === null) setSelectedQuoteId(parsed.selectedQuoteId);
+      if (["draft", "sent", "accepted", "declined"].includes(parsed.selectedQuoteStatus)) setSelectedQuoteStatus(parsed.selectedQuoteStatus);
+      if (["mine", "team"].includes(parsed.quoteScope)) setQuoteScope(parsed.quoteScope);
+      if (["all", "draft", "sent", "accepted", "declined"].includes(parsed.quoteStatusFilter)) setQuoteStatusFilter(parsed.quoteStatusFilter);
     } catch (err) {
       console.error("Failed to load saved estimator state:", err);
       localStorage.removeItem(storageKey);
@@ -677,9 +683,9 @@ function App() {
   useEffect(() => {
     localStorage.setItem(
       storageKey,
-      JSON.stringify({ selectedTier, lineQtys, settings, customer, selectedPlanId, renaissance, expanded, toolbarOpen, renaissanceOpen, financingOpen, activeView, searchTerm, selectedQuoteId })
+      JSON.stringify({ selectedTier, lineQtys, settings, customer, selectedPlanId, renaissance, expanded, toolbarOpen, renaissanceOpen, financingOpen, activeView, searchTerm, selectedQuoteId, selectedQuoteStatus, quoteScope, quoteStatusFilter })
     );
-  }, [selectedTier, lineQtys, settings, customer, selectedPlanId, renaissance, expanded, toolbarOpen, renaissanceOpen, financingOpen, activeView, searchTerm, selectedQuoteId]);
+  }, [selectedTier, lineQtys, settings, customer, selectedPlanId, renaissance, expanded, toolbarOpen, renaissanceOpen, financingOpen, activeView, searchTerm, selectedQuoteId, selectedQuoteStatus, quoteScope, quoteStatusFilter]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = settings.darkMode ? "dark" : "light";
@@ -720,6 +726,12 @@ function App() {
   const permissions = getPermissions(currentRole);
   const hasValidRole = !currentRole || validRoles.includes(currentRole);
   const selectedPlan = financingPlans.find((plan) => plan.id === selectedPlanId) || financingPlans[0];
+
+  useEffect(() => {
+    if (permissions.canViewTeamQuotes) return;
+    if (quoteScope !== "mine") setQuoteScope("mine");
+  }, [permissions.canViewTeamQuotes, quoteScope]);
+
   const currentRenaissanceOptions = renaissanceSectionOptions[renaissance.section] || renaissanceSectionOptions.Moderno;
   const renaissanceStyleKey = renaissance.section;
 
@@ -940,6 +952,7 @@ function App() {
     setRenaissance(defaultRenaissance);
     setCustomer(defaultCustomer);
     setSelectedQuoteId(null);
+    setSelectedQuoteStatus("draft");
     setSaveMessage("");
     setSettings((current) => ({ ...current, ...defaultSettings, darkMode: current.darkMode, showCommission: current.showCommission, showNoFinancingTotal: current.showNoFinancingTotal }));
   }
@@ -964,11 +977,21 @@ function App() {
     }
 
     setQuotesLoading(true);
-    const { data, error } = await supabase
+    let query = supabase
       .from("quotes")
-      .select("id, customer_name, customer_email, customer_phone, financing_price, cash_price, tier, updated_at")
+      .select("id, created_by, customer_name, customer_email, customer_phone, financing_price, cash_price, tier, status, updated_at")
       .order("updated_at", { ascending: false })
-      .limit(50);
+      .limit(100);
+
+    if (!permissions.canViewTeamQuotes || quoteScope === "mine") {
+      query = query.eq("created_by", session.user.id);
+    }
+
+    if (quoteStatusFilter !== "all") {
+      query = query.eq("status", quoteStatusFilter);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       console.error("Refresh saved quotes failed", error);
@@ -977,7 +1000,30 @@ function App() {
       return;
     }
 
-    setSavedQuotes(data || []);
+    const quotes = data || [];
+    const creatorIds = [...new Set(quotes.map((q) => q.created_by).filter(Boolean))];
+    let profileMap = {};
+
+    if (creatorIds.length) {
+      const { data: profilesData, error: profilesError } = await supabase
+        .from("profiles")
+        .select("id, full_name, email")
+        .in("id", creatorIds);
+
+      if (profilesError) {
+        console.error("Fetch quote owners failed", profilesError);
+      } else {
+        profileMap = Object.fromEntries((profilesData || []).map((row) => [row.id, row]));
+      }
+    }
+
+    setSavedQuotes(
+      quotes.map((quote) => ({
+        ...quote,
+        owner_name: profileMap[quote.created_by]?.full_name || profileMap[quote.created_by]?.email || null,
+        owner_email: profileMap[quote.created_by]?.email || null
+      }))
+    );
     setQuotesLoading(false);
   }
 
@@ -1000,7 +1046,7 @@ function App() {
     setSaveMessage("");
     const { data, error } = await supabase
       .from("quotes")
-      .select("id, quote_data")
+      .select("id, status, quote_data")
       .eq("id", quoteId)
       .single();
 
@@ -1012,6 +1058,7 @@ function App() {
 
     hydrateQuoteSnapshot(data?.quote_data || {});
     setSelectedQuoteId(data?.id || quoteId);
+    setSelectedQuoteStatus(data?.status || "draft");
     setSaveMessage("Quote loaded.");
   }
 
@@ -1052,7 +1099,7 @@ function App() {
       financed_amount: Number.isFinite(financedBase) ? +financedBase.toFixed(2) : 0,
       monthly_payment: Number.isFinite(monthlyPayment) ? +monthlyPayment.toFixed(2) : 0,
       financing_plan_name: selectedPlan?.label || null,
-      status: "draft"
+      status: selectedQuoteStatus || "draft"
     };
 
     const lineRows = activeItems
@@ -1143,6 +1190,50 @@ function App() {
     await refreshSavedQuotes();
     setSaveLoading(false);
     setSaveMessage(`${isUpdating ? "Quote updated." : "Quote saved."}${lineSaveWarning}`);
+  }
+
+  async function setQuoteStatus(status) {
+    if (!selectedQuoteId) {
+      setSelectedQuoteStatus(status);
+      setSaveMessage(`Quote status set to ${status}. Save the quote to keep it.`);
+      return;
+    }
+
+    const { error } = await supabase
+      .from("quotes")
+      .update({ status })
+      .eq("id", selectedQuoteId);
+
+    if (error) {
+      console.error("Update quote status failed", error);
+      setSaveMessage(`Could not update status: ${formatSupabaseError(error, "unknown error")}`);
+      return;
+    }
+
+    setSelectedQuoteStatus(status);
+    setSaveMessage(`Quote marked ${status}.`);
+    await refreshSavedQuotes();
+  }
+
+  async function deleteSelectedQuote() {
+    if (!selectedQuoteId) {
+      setSaveMessage("Load a saved quote before deleting.");
+      return;
+    }
+
+    const confirmed = window.confirm("Delete this saved quote? This cannot be undone.");
+    if (!confirmed) return;
+
+    const { error } = await supabase.from("quotes").delete().eq("id", selectedQuoteId);
+    if (error) {
+      console.error("Delete quote failed", error);
+      setSaveMessage(`Could not delete quote: ${formatSupabaseError(error, "unknown error")}`);
+      return;
+    }
+
+    clearAll();
+    await refreshSavedQuotes();
+    setSaveMessage("Quote deleted.");
   }
 
   async function handleLogin(event) {
@@ -1574,6 +1665,7 @@ function App() {
               <div className="toolbar-buttons inline-actions">
                 <button className="ghost-btn" onClick={saveQuote} disabled={saveLoading}>{saveLoading ? "Saving…" : selectedQuoteId ? "Update" : "Save Quote"}</button>
                 <button className="ghost-btn" onClick={copySummary}>Copy</button>
+                <button className="ghost-btn danger-btn" onClick={deleteSelectedQuote}>Delete</button>
               </div>
             </div>
             <div className="customer-grid compact-customer-grid">
@@ -1591,6 +1683,14 @@ function App() {
               </label>
             </div>
             {saveMessage ? <p className="small-note success-note">{saveMessage}</p> : null}
+            <div className="quote-status-strip">
+              <span className={`status-pill status-${selectedQuoteStatus}`}>Status: {selectedQuoteStatus}</span>
+              <div className="status-actions">
+                {["draft", "sent", "accepted", "declined"].map((status) => (
+                  <button key={status} type="button" className={selectedQuoteStatus === status ? "status-btn active" : "status-btn"} onClick={() => setQuoteStatus(status)}>{status}</button>
+                ))}
+              </div>
+            </div>
             <div className="summary-row"><span>Subtotal</span><strong>{currency.format(subtotal)}</strong></div>
             <div className="summary-row"><span>Sales tax on 40%</span><strong>{currency.format(salesTax)}</strong></div>
             <div className="summary-row"><span>Permitting + location fees</span><strong>{currency.format(permittingFee)}</strong></div>
@@ -1641,6 +1741,25 @@ function App() {
                 <h2>Saved quotes</h2>
                 <p className="small-note">Admins and managers can see team quotes. Reps see their own.</p>
               </div>
+              <span className="saved-count-pill">{savedQuotes.length} shown</span>
+            </div>
+            <div className="saved-quote-controls">
+              {permissions.canViewTeamQuotes && (
+                <div className="segmented-control">
+                  <button className={quoteScope === "mine" ? "segmented-btn active" : "segmented-btn"} onClick={() => setQuoteScope("mine")}>My quotes</button>
+                  <button className={quoteScope === "team" ? "segmented-btn active" : "segmented-btn"} onClick={() => setQuoteScope("team")}>Team quotes</button>
+                </div>
+              )}
+              <label className="inline-select">
+                <span>Status</span>
+                <select value={quoteStatusFilter} onChange={(e) => setQuoteStatusFilter(e.target.value)}>
+                  <option value="all">All</option>
+                  <option value="draft">Draft</option>
+                  <option value="sent">Sent</option>
+                  <option value="accepted">Accepted</option>
+                  <option value="declined">Declined</option>
+                </select>
+              </label>
             </div>
             {quotesLoading ? <p className="small-note">Loading saved quotes…</p> : null}
             {!quotesLoading && savedQuotes.length === 0 ? <p className="small-note">No saved quotes yet.</p> : null}
@@ -1650,10 +1769,12 @@ function App() {
                   <div>
                     <strong>{quote.customer_name || "Untitled quote"}</strong>
                     <span>{quote.customer_email || quote.customer_phone || "No customer contact yet"}</span>
+                    {permissions.canViewTeamQuotes && quote.owner_name ? <span className="owner-line">Owner: {quote.owner_name}</span> : null}
                   </div>
                   <div>
                     <strong>{currency.format(quote.financing_price || quote.cash_price || 0)}</strong>
                     <span>{quote.tier} · {new Date(quote.updated_at).toLocaleDateString()}</span>
+                    <span className={`status-pill mini status-${quote.status || "draft"}`}>{quote.status || "draft"}</span>
                   </div>
                 </button>
               ))}
