@@ -129,12 +129,12 @@ function AccessPanel({ profile, permissions }) {
         <div className="access-item">
           <strong>Team quote visibility</strong>
           <span>{permissions.canViewTeamQuotes ? "Manager+" : "Own quotes only"}</span>
-          <p>Managers and admins will be able to see rep quotes once saved quotes are wired in.</p>
+          <p>Managers and admins can review rep quotes and statuses.</p>
         </div>
         <div className="access-item">
           <strong>Pricing controls</strong>
           <span>{permissions.canManagePricing ? "Admin only" : "Locked"}</span>
-          <p>Pricing and rule edits stay protected until the admin panel is added.</p>
+          <p>Admins can now start editing pricing foundations from inside the app.</p>
         </div>
         <div className="access-item">
           <strong>User controls</strong>
@@ -168,9 +168,11 @@ function organizeCategories(categories) {
   return uiCategories;
 }
 
-const uiCategories = organizeCategories(appData.categories);
-const defaultLineState = Object.fromEntries(uiCategories.flatMap((cat) => cat.items.map((item) => [item.id, ""])));
-const defaultExpanded = Object.fromEntries(uiCategories.map((cat) => [cat.name, false]));
+const baseUiCategories = organizeCategories(appData.categories);
+const defaultLineState = Object.fromEntries(baseUiCategories.flatMap((cat) => cat.items.map((item) => [item.id, ""])));
+const defaultExpanded = Object.fromEntries(baseUiCategories.map((cat) => [cat.name, false]));
+const defaultTierMultipliers = Object.fromEntries(Object.entries(appData.pricingTiers).map(([key, tier]) => [key, tier.multiplier]));
+const defaultLinePrices = Object.fromEntries(baseUiCategories.flatMap((cat) => cat.items.map((item) => [item.id, item.basePrice])));
 const widthOptions = [0, ...Array.from({ length: 31 }, (_, i) => i + 10)];
 const projectionOptions = [0, ...Array.from({ length: 21 }, (_, i) => i + 10)];
 
@@ -569,6 +571,13 @@ function App() {
   const [financingOpen, setFinancingOpen] = useState(false);
   const [activeView, setActiveView] = useState("standard");
   const [searchTerm, setSearchTerm] = useState("");
+  const [pricingOverrides, setPricingOverrides] = useState({ appDefaults: {}, tierMultipliers: {}, linePrices: {} });
+  const [pricingDraft, setPricingDraft] = useState({ appDefaults: {}, tierMultipliers: {}, linePrices: {} });
+  const [pricingLoading, setPricingLoading] = useState(false);
+  const [pricingSaving, setPricingSaving] = useState(false);
+  const [pricingMessage, setPricingMessage] = useState("");
+  const [pricingEditorOpen, setPricingEditorOpen] = useState(false);
+  const [pricingEditorSearch, setPricingEditorSearch] = useState("");
   const touchStartX = useRef(null);
 
   useEffect(() => {
@@ -687,9 +696,26 @@ function App() {
     );
   }, [selectedTier, lineQtys, settings, customer, selectedPlanId, renaissance, expanded, toolbarOpen, renaissanceOpen, financingOpen, activeView, searchTerm, selectedQuoteId, selectedQuoteStatus, quoteScope, quoteStatusFilter]);
 
+  const pricingTiers = useMemo(() => Object.fromEntries(Object.entries(appData.pricingTiers).map(([key, tier]) => [key, { ...tier, multiplier: pricingOverrides.tierMultipliers?.[key] ?? tier.multiplier }])), [pricingOverrides.tierMultipliers]);
+  const effectiveAppDefaults = useMemo(() => ({ ...appData.defaultSettings, ...pricingOverrides.appDefaults }), [pricingOverrides.appDefaults]);
+  const categories = useMemo(() => baseUiCategories.map((cat) => ({ ...cat, items: cat.items.map((item) => ({ ...item, basePrice: pricingOverrides.linePrices?.[item.id] ?? item.basePrice })) })), [pricingOverrides.linePrices]);
+
   useEffect(() => {
     document.documentElement.dataset.theme = settings.darkMode ? "dark" : "light";
   }, [settings.darkMode]);
+
+  useEffect(() => {
+    setPricingDraft({
+      appDefaults: {
+        taxRate: String(effectiveAppDefaults.taxRate ?? ""),
+        taxablePortion: String(effectiveAppDefaults.taxablePortion ?? ""),
+        permittingFee: String(effectiveAppDefaults.permittingFee ?? ""),
+        financingMarkup: String(effectiveAppDefaults.financingMarkup ?? "")
+      },
+      tierMultipliers: Object.fromEntries(Object.keys(pricingTiers).map((key) => [key, String(pricingTiers[key]?.multiplier ?? "")])),
+      linePrices: Object.fromEntries(baseUiCategories.flatMap((cat) => cat.items.map((item) => [item.id, String(pricingOverrides.linePrices?.[item.id] ?? item.basePrice)])))
+    });
+  }, [effectiveAppDefaults, pricingTiers, pricingOverrides.linePrices]);
 
   useEffect(() => {
     setRenaissance((current) => ({ ...current, beamLength: Math.max(safeNumber(current.width) - safeNumber(current.sideOverhang) * 2, 0) }));
@@ -721,7 +747,7 @@ function App() {
     }
   }, [renaissance.section, renaissance.width, renaissance.projection, renaissance.frontOverhang, renaissance.sideOverhang, renaissance.supportBeams, renaissance.postCountOverride, renaissance.beamUpgrade, renaissance.windSpeed, renaissance.exposure]);
 
-  const activeTier = appData.pricingTiers[selectedTier] || appData.pricingTiers.tier5;
+  const activeTier = pricingTiers[selectedTier] || pricingTiers.tier5 || appData.pricingTiers.tier5;
   const currentRole = resolveRole(profile, session);
   const permissions = getPermissions(currentRole);
   const hasValidRole = !currentRole || validRoles.includes(currentRole);
@@ -735,7 +761,6 @@ function App() {
   const currentRenaissanceOptions = renaissanceSectionOptions[renaissance.section] || renaissanceSectionOptions.Moderno;
   const renaissanceStyleKey = renaissance.section;
 
-  const categories = uiCategories;
   const normalizedSearch = searchTerm.trim().toLowerCase();
   const filteredCategories = useMemo(() => categories.map((cat) => ({
     ...cat,
@@ -866,12 +891,12 @@ function App() {
   const normalizedLocation = `${settings.city || ""} ${settings.county || ""}`.trim().toLowerCase();
   const matchedCityRule = Object.entries(cityRules).find(([key]) => normalizedLocation.includes(key))?.[1] || null;
   const locationFee = matchedCityRule?.fee || 0;
-  const taxableBase = subtotal * defaultSettings.taxablePortion;
-  const salesTax = taxableBase * defaultSettings.taxRate;
-  const permittingFee = settings.removePermit ? 0 : defaultSettings.permittingFee + locationFee;
+  const taxableBase = subtotal * effectiveAppDefaults.taxablePortion;
+  const salesTax = taxableBase * effectiveAppDefaults.taxRate;
+  const permittingFee = settings.removePermit ? 0 : effectiveAppDefaults.permittingFee + locationFee;
   const totalNoFinancing = subtotal + salesTax + permittingFee;
   const depositAmount = Math.min(Math.max(safeNumber(settings.depositAmount), 0), totalNoFinancing);
-  const financedSaleAmount = totalNoFinancing * (1 + appData.defaultSettings.financingMarkup);
+  const financedSaleAmount = totalNoFinancing * (1 + effectiveAppDefaults.financingMarkup);
   const financedBase = Math.max(financedSaleAmount - depositAmount, 0);
   const monthlyPayment = financedBase * (selectedPlan.paymentFactor / 100);
   const commissionRate = selectedTier === "volume" ? 0 : selectedTier === "tier7_5" ? 0.075 : selectedTier === "tier5" ? 0.05 : selectedTier === "tier10" ? 0.10 : 0.15;
@@ -957,6 +982,73 @@ function App() {
     setSettings((current) => ({ ...current, ...defaultSettings, darkMode: current.darkMode, showCommission: current.showCommission, showNoFinancingTotal: current.showNoFinancingTotal }));
   }
 
+  async function refreshPricingSettings() {
+    if (!session?.user?.id) return;
+    setPricingLoading(true);
+    setPricingMessage("");
+
+    const { data, error } = await supabase
+      .from("pricing_settings")
+      .select("setting_key, setting_value")
+      .in("setting_key", ["app_defaults", "tier_multipliers", "line_price_overrides"]);
+
+    if (error) {
+      console.error("Load pricing settings failed", error);
+      if (permissions.canManagePricing) setPricingMessage(`Could not load admin pricing: ${formatSupabaseError(error, "unknown error")}`);
+      setPricingLoading(false);
+      return;
+    }
+
+    const next = { appDefaults: {}, tierMultipliers: {}, linePrices: {} };
+    (data || []).forEach((row) => {
+      if (row.setting_key === "app_defaults" && row.setting_value) next.appDefaults = row.setting_value;
+      if (row.setting_key === "tier_multipliers" && row.setting_value) next.tierMultipliers = row.setting_value;
+      if (row.setting_key === "line_price_overrides" && row.setting_value) next.linePrices = row.setting_value;
+    });
+
+    setPricingOverrides(next);
+    setPricingLoading(false);
+  }
+
+  async function savePricingSettings() {
+    if (!permissions.canManagePricing || !session?.user?.id) return;
+    setPricingSaving(true);
+    setPricingMessage("");
+
+    const parsedDefaults = {
+      taxRate: safeNumber(pricingDraft.appDefaults.taxRate),
+      taxablePortion: safeNumber(pricingDraft.appDefaults.taxablePortion),
+      permittingFee: safeNumber(pricingDraft.appDefaults.permittingFee),
+      financingMarkup: safeNumber(pricingDraft.appDefaults.financingMarkup)
+    };
+
+    const parsedTierMultipliers = Object.fromEntries(Object.keys(defaultTierMultipliers).map((key) => [key, safeNumber(pricingDraft.tierMultipliers[key]) || defaultTierMultipliers[key]]));
+    const parsedLinePrices = {};
+    Object.entries(defaultLinePrices).forEach(([itemId, basePrice]) => {
+      const nextPrice = safeNumber(pricingDraft.linePrices[itemId]);
+      if (nextPrice > 0 && Math.abs(nextPrice - basePrice) > 0.0001) parsedLinePrices[itemId] = +nextPrice.toFixed(2);
+    });
+
+    const rows = [
+      { setting_key: "app_defaults", setting_value: parsedDefaults, updated_by: session.user.id },
+      { setting_key: "tier_multipliers", setting_value: parsedTierMultipliers, updated_by: session.user.id },
+      { setting_key: "line_price_overrides", setting_value: parsedLinePrices, updated_by: session.user.id }
+    ];
+
+    const { error } = await supabase.from("pricing_settings").upsert(rows, { onConflict: "setting_key" });
+
+    if (error) {
+      console.error("Save pricing settings failed", error);
+      setPricingSaving(false);
+      setPricingMessage(`Could not save admin pricing: ${formatSupabaseError(error, "unknown error")}`);
+      return;
+    }
+
+    setPricingOverrides({ appDefaults: parsedDefaults, tierMultipliers: parsedTierMultipliers, linePrices: parsedLinePrices });
+    setPricingSaving(false);
+    setPricingMessage("Admin pricing saved to Supabase.");
+  }
+
   useEffect(() => {
     if (!session?.user?.id || !currentRole || !permissions.canUseEstimator) {
       setSavedQuotes([]);
@@ -967,6 +1059,12 @@ function App() {
     refreshSavedQuotes();
   }, [session?.user?.id, currentRole, permissions.canUseEstimator, permissions.canViewTeamQuotes, quoteScope, quoteStatusFilter]);
 
+
+
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    refreshPricingSettings();
+  }, [session?.user?.id, currentRole]);
 
 
   async function refreshSavedQuotes() {
@@ -1028,7 +1126,7 @@ function App() {
   }
 
   function hydrateQuoteSnapshot(snapshot) {
-    setSelectedTier(snapshot?.selectedTier && appData.pricingTiers[snapshot.selectedTier] ? snapshot.selectedTier : "tier5");
+    setSelectedTier(snapshot?.selectedTier && pricingTiers[snapshot.selectedTier] ? snapshot.selectedTier : "tier5");
     setLineQtys({ ...defaultLineState, ...(snapshot?.lineQtys || {}) });
     setSettings((current) => ({ ...current, ...defaultSettings, ...(snapshot?.settings || {}), darkMode: current.darkMode, showCommission: current.showCommission, showNoFinancingTotal: current.showNoFinancingTotal }));
     setCustomer({ ...defaultCustomer, ...(snapshot?.customer || {}) });
@@ -1374,7 +1472,7 @@ function App() {
         {toolbarOpen && (
           <div className="toolbar-stack">
             <div className="pill-row">
-              {Object.entries(appData.pricingTiers).map(([key, tier]) => (
+              {Object.entries(pricingTiers).map(([key, tier]) => (
                 <button key={key} className={selectedTier === key ? "pill active" : "pill"} onClick={() => setSelectedTier(key)}>
                   {tier.label}
                 </button>
@@ -1405,6 +1503,80 @@ function App() {
       </section>
 
       <AccessPanel profile={profile || { role: currentRole }} permissions={permissions} />
+
+
+      {permissions.canManagePricing && (
+        <section className="card admin-pricing-card">
+          <div className="section-head compact-head">
+            <div>
+              <h2>Admin pricing foundation</h2>
+              <p className="small-note">Edit live constants, tier multipliers, and base line prices. This is the first step toward full in-app pricing control.</p>
+            </div>
+            <div className="toolbar-buttons inline-actions">
+              <button className="ghost-btn" onClick={() => setPricingEditorOpen((value) => !value)}>{pricingEditorOpen ? "Hide" : "Show"}</button>
+              <button className="ghost-btn" onClick={refreshPricingSettings} disabled={pricingLoading}>{pricingLoading ? "Refreshing…" : "Refresh"}</button>
+              <button className="ghost-btn" onClick={savePricingSettings} disabled={pricingSaving}>{pricingSaving ? "Saving…" : "Save pricing"}</button>
+            </div>
+          </div>
+          {pricingMessage ? <p className="small-note success-note">{pricingMessage}</p> : null}
+          {pricingEditorOpen && (
+            <>
+              <div className="admin-pricing-grid">
+                <label>
+                  Tax rate
+                  <input type="number" inputMode="decimal" step="0.0001" value={pricingDraft.appDefaults.taxRate || ""} onChange={(e) => setPricingDraft((current) => ({ ...current, appDefaults: { ...current.appDefaults, taxRate: e.target.value } }))} />
+                </label>
+                <label>
+                  Taxable portion
+                  <input type="number" inputMode="decimal" step="0.01" value={pricingDraft.appDefaults.taxablePortion || ""} onChange={(e) => setPricingDraft((current) => ({ ...current, appDefaults: { ...current.appDefaults, taxablePortion: e.target.value } }))} />
+                </label>
+                <label>
+                  Permitting fee
+                  <input type="number" inputMode="decimal" step="0.01" value={pricingDraft.appDefaults.permittingFee || ""} onChange={(e) => setPricingDraft((current) => ({ ...current, appDefaults: { ...current.appDefaults, permittingFee: e.target.value } }))} />
+                </label>
+                <label>
+                  Financing markup
+                  <input type="number" inputMode="decimal" step="0.01" value={pricingDraft.appDefaults.financingMarkup || ""} onChange={(e) => setPricingDraft((current) => ({ ...current, appDefaults: { ...current.appDefaults, financingMarkup: e.target.value } }))} />
+                </label>
+              </div>
+              <div className="admin-tier-grid">
+                {Object.entries(pricingTiers).map(([key, tier]) => (
+                  <label key={`admin-tier-${key}`}>
+                    {tier.label} multiplier
+                    <input type="number" inputMode="decimal" step="0.01" value={pricingDraft.tierMultipliers[key] || ""} onChange={(e) => setPricingDraft((current) => ({ ...current, tierMultipliers: { ...current.tierMultipliers, [key]: e.target.value } }))} />
+                  </label>
+                ))}
+              </div>
+              <label className="standard-search-label admin-search-label">
+                Search line items
+                <input type="text" placeholder="Search permit, concrete, screen..." value={pricingEditorSearch} onChange={(e) => setPricingEditorSearch(e.target.value)} />
+              </label>
+              <div className="admin-pricing-list">
+                {categories.map((cat) => {
+                  const visibleItems = cat.items.filter((item) => !pricingEditorSearch.trim() || item.name.toLowerCase().includes(pricingEditorSearch.trim().toLowerCase()) || cat.name.toLowerCase().includes(pricingEditorSearch.trim().toLowerCase()));
+                  if (!visibleItems.length) return null;
+                  return (
+                    <div key={`admin-${cat.name}`} className="admin-pricing-group">
+                      <h3>{cat.name}</h3>
+                      <div className="admin-pricing-group-list">
+                        {visibleItems.map((item) => (
+                          <label key={`admin-line-${item.id}`} className="admin-line-price-row">
+                            <span>
+                              <strong>{item.name}</strong>
+                              <small>{item.unit}</small>
+                            </span>
+                            <input type="number" inputMode="decimal" step="0.01" value={pricingDraft.linePrices[item.id] || ""} onChange={(e) => setPricingDraft((current) => ({ ...current, linePrices: { ...current.linePrices, [item.id]: e.target.value } }))} />
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </section>
+      )}
 
       {settings.showCommission && (
         <section className="commission-box card">
@@ -1505,7 +1677,7 @@ function App() {
                 <button className="ghost-btn" onClick={() => expandAll(false)}>Collapse all</button>
               </div>
               <div className="pill-row bottom-tier-row">
-                {Object.entries(appData.pricingTiers).map(([key, tier]) => (
+                {Object.entries(pricingTiers).map(([key, tier]) => (
                   <button key={`bottom-${key}`} className={selectedTier === key ? "pill active" : "pill"} onClick={() => setSelectedTier(key)}>{tier.label}</button>
                 ))}
               </div>
@@ -1644,7 +1816,7 @@ function App() {
                 </>
               )}
               <div className="pill-row bottom-tier-row">
-                {Object.entries(appData.pricingTiers).map(([key, tier]) => (
+                {Object.entries(pricingTiers).map(([key, tier]) => (
                   <button key={`r-bottom-${key}`} className={selectedTier === key ? "pill active" : "pill"} onClick={() => setSelectedTier(key)}>{tier.label}</button>
                 ))}
               </div>

@@ -1,0 +1,33 @@
+Run this in Supabase SQL Editor after deploying Step 9.
+This lets all logged-in users read live pricing, while only admins can change it.
+
+DROP POLICY IF EXISTS "pricing_settings_admin_read_write" ON public.pricing_settings;
+DROP POLICY IF EXISTS "pricing_settings_read_authenticated" ON public.pricing_settings;
+DROP POLICY IF EXISTS "pricing_settings_admin_insert" ON public.pricing_settings;
+DROP POLICY IF EXISTS "pricing_settings_admin_update" ON public.pricing_settings;
+DROP POLICY IF EXISTS "pricing_settings_admin_delete" ON public.pricing_settings;
+
+CREATE POLICY "pricing_settings_read_authenticated"
+ON public.pricing_settings
+FOR SELECT
+TO authenticated
+USING (true);
+
+CREATE POLICY "pricing_settings_admin_insert"
+ON public.pricing_settings
+FOR INSERT
+TO authenticated
+WITH CHECK (public.current_user_role() = 'admin');
+
+CREATE POLICY "pricing_settings_admin_update"
+ON public.pricing_settings
+FOR UPDATE
+TO authenticated
+USING (public.current_user_role() = 'admin')
+WITH CHECK (public.current_user_role() = 'admin');
+
+CREATE POLICY "pricing_settings_admin_delete"
+ON public.pricing_settings
+FOR DELETE
+TO authenticated
+USING (public.current_user_role() = 'admin');
