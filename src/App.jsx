@@ -965,7 +965,7 @@ function App() {
     }
 
     refreshSavedQuotes();
-  }, [session?.user?.id, currentRole, permissions.canUseEstimator]);
+  }, [session?.user?.id, currentRole, permissions.canUseEstimator, permissions.canViewTeamQuotes, quoteScope, quoteStatusFilter]);
 
 
 
@@ -1221,16 +1221,23 @@ function App() {
       return;
     }
 
+    const quoteIdToDelete = selectedQuoteId;
     const confirmed = window.confirm("Delete this saved quote? This cannot be undone.");
     if (!confirmed) return;
 
-    const { error } = await supabase.from("quotes").delete().eq("id", selectedQuoteId);
+    const { error: lineDeleteError } = await supabase.from("quote_lines").delete().eq("quote_id", quoteIdToDelete);
+    if (lineDeleteError) {
+      console.error("Delete quote lines failed", lineDeleteError);
+    }
+
+    const { error } = await supabase.from("quotes").delete().eq("id", quoteIdToDelete);
     if (error) {
       console.error("Delete quote failed", error);
       setSaveMessage(`Could not delete quote: ${formatSupabaseError(error, "unknown error")}`);
       return;
     }
 
+    setSavedQuotes((current) => current.filter((quote) => quote.id !== quoteIdToDelete));
     clearAll();
     await refreshSavedQuotes();
     setSaveMessage("Quote deleted.");
