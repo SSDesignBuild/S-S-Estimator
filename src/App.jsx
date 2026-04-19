@@ -200,22 +200,18 @@ function mergeCategoriesWithCustomServices(baseCategories, customServices) {
   return merged.filter((cat) => cat.items.length);
 }
 
-function buildRenaissanceStylesWithOverrides(styles, overrides) {
+function buildRenaissanceStylesWithOverrides(styles, percentUpdate) {
   const merged = JSON.parse(JSON.stringify(styles || {}));
-  Object.entries(overrides || {}).forEach(([compoundKey, price]) => {
-    const [styleKey, projection, width] = compoundKey.split("||");
-    if (!styleKey || !projection || !width) return;
-    if (!merged[styleKey]) merged[styleKey] = {};
-    if (!merged[styleKey][projection]) merged[styleKey][projection] = {};
-    merged[styleKey][projection][width] = safeNumber(price);
+  const percent = safeNumber(percentUpdate);
+  const factor = 1 + percent / 100;
+  Object.keys(merged).forEach((styleKey) => {
+    Object.keys(merged[styleKey] || {}).forEach((projection) => {
+      Object.keys(merged[styleKey][projection] || {}).forEach((width) => {
+        merged[styleKey][projection][width] = +(safeNumber(merged[styleKey][projection][width]) * factor).toFixed(2);
+      });
+    });
   });
   return merged;
-}
-
-function formatRenaissanceOverrideLabel(compoundKey) {
-  const [styleKey, projection, width] = String(compoundKey || "").split("||");
-  if (!styleKey || !projection || !width) return compoundKey;
-  return `${styleKey} | ${width}' W x ${projection}' P`;
 }
 
 const baseUiCategories = organizeCategories(appData.categories);
@@ -628,16 +624,15 @@ function App() {
   const [financingOpen, setFinancingOpen] = useState(false);
   const [activeView, setActiveView] = useState("standard");
   const [searchTerm, setSearchTerm] = useState("");
-  const [pricingOverrides, setPricingOverrides] = useState({ appDefaults: {}, tierMultipliers: {}, linePrices: {}, customServices: [], renaissanceBaseOverrides: {}, renaissanceAddOns: {} });
-  const [pricingDraft, setPricingDraft] = useState({ appDefaults: {}, tierMultipliers: {}, linePrices: {}, customServices: [], renaissanceBaseOverrides: {}, renaissanceAddOns: {} });
+  const [pricingOverrides, setPricingOverrides] = useState({ appDefaults: {}, tierMultipliers: {}, linePrices: {}, customServices: [], renaissanceTablePercent: 0, renaissanceAddOns: {} });
+  const [pricingDraft, setPricingDraft] = useState({ appDefaults: {}, tierMultipliers: {}, linePrices: {}, customServices: [], renaissanceTablePercent: 0, renaissanceAddOns: {} });
   const [pricingLoading, setPricingLoading] = useState(false);
   const [pricingSaving, setPricingSaving] = useState(false);
   const [pricingMessage, setPricingMessage] = useState("");
   const [pricingEditorOpen, setPricingEditorOpen] = useState(false);
   const [pricingEditorSearch, setPricingEditorSearch] = useState("");
   const [newServiceDraft, setNewServiceDraft] = useState({ category: "Custom Services", name: "", unit: "Each", basePrice: "" });
-  const [renaissanceBaseDraft, setRenaissanceBaseDraft] = useState({ styleKey: "Moderno Attached", width: 10, projection: 10, price: "" });
-  const touchStartX = useRef(null);
+    const touchStartX = useRef(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -757,7 +752,7 @@ function App() {
 
   const pricingTiers = useMemo(() => Object.fromEntries(Object.entries(appData.pricingTiers).map(([key, tier]) => [key, { ...tier, multiplier: pricingOverrides.tierMultipliers?.[key] ?? tier.multiplier }])), [pricingOverrides.tierMultipliers]);
   const effectiveAppDefaults = useMemo(() => ({ ...appData.defaultSettings, ...pricingOverrides.appDefaults }), [pricingOverrides.appDefaults]);
-  const mergedRenaissanceStyles = useMemo(() => buildRenaissanceStylesWithOverrides(appData.renaissance.styles, pricingOverrides.renaissanceBaseOverrides), [pricingOverrides.renaissanceBaseOverrides]);
+  const mergedRenaissanceStyles = useMemo(() => buildRenaissanceStylesWithOverrides(appData.renaissance.styles, pricingOverrides.renaissanceTablePercent), [pricingOverrides.renaissanceTablePercent]);
   const renaissanceAddOns = useMemo(() => ({
     ...appData.renaissance.addOns,
     ...pricingOverrides.renaissanceAddOns,
@@ -808,10 +803,10 @@ function App() {
       tierMultipliers: Object.fromEntries(Object.keys(pricingTiers).map((key) => [key, String(pricingTiers[key]?.multiplier ?? "")])),
       linePrices: Object.fromEntries(baseUiCategories.flatMap((cat) => cat.items.map((item) => [item.id, String(pricingOverrides.linePrices?.[item.id] ?? item.basePrice)]))),
       customServices: (pricingOverrides.customServices || []).map((service, index) => normalizeCustomService(service, index)),
-      renaissanceBaseOverrides: { ...(pricingOverrides.renaissanceBaseOverrides || {}) },
+      renaissanceTablePercent: String(pricingOverrides.renaissanceTablePercent ?? 0),
       renaissanceAddOns: cleanJson(renaissanceAddOns)
     });
-  }, [effectiveAppDefaults, pricingTiers, pricingOverrides.linePrices, pricingOverrides.customServices, pricingOverrides.renaissanceBaseOverrides, renaissanceAddOns]);
+  }, [effectiveAppDefaults, pricingTiers, pricingOverrides.linePrices, pricingOverrides.customServices, pricingOverrides.renaissanceTablePercent, renaissanceAddOns]);
 
   useEffect(() => {
     setRenaissance((current) => ({ ...current, beamLength: Math.max(safeNumber(current.width) - safeNumber(current.sideOverhang) * 2, 0) }));
@@ -1086,7 +1081,7 @@ function App() {
     const { data, error } = await supabase
       .from("pricing_settings")
       .select("setting_key, setting_value")
-      .in("setting_key", ["app_defaults", "tier_multipliers", "line_price_overrides", "custom_services", "renaissance_base_overrides", "renaissance_addon_overrides"]);
+      .in("setting_key", ["app_defaults", "tier_multipliers", "line_price_overrides", "custom_services", "renaissance_table_percent", "renaissance_addon_overrides"]);
 
     if (error) {
       console.error("Load pricing settings failed", error);
@@ -1095,13 +1090,13 @@ function App() {
       return;
     }
 
-    const next = { appDefaults: {}, tierMultipliers: {}, linePrices: {}, customServices: [], renaissanceBaseOverrides: {}, renaissanceAddOns: {} };
+    const next = { appDefaults: {}, tierMultipliers: {}, linePrices: {}, customServices: [], renaissanceTablePercent: 0, renaissanceAddOns: {} };
     (data || []).forEach((row) => {
       if (row.setting_key === "app_defaults" && row.setting_value) next.appDefaults = row.setting_value;
       if (row.setting_key === "tier_multipliers" && row.setting_value) next.tierMultipliers = row.setting_value;
       if (row.setting_key === "line_price_overrides" && row.setting_value) next.linePrices = row.setting_value;
       if (row.setting_key === "custom_services" && row.setting_value) next.customServices = Array.isArray(row.setting_value) ? row.setting_value : [];
-      if (row.setting_key === "renaissance_base_overrides" && row.setting_value) next.renaissanceBaseOverrides = row.setting_value;
+      if (row.setting_key === "renaissance_table_percent" && row.setting_value != null) next.renaissanceTablePercent = safeNumber(row.setting_value);
       if (row.setting_key === "renaissance_addon_overrides" && row.setting_value) next.renaissanceAddOns = row.setting_value;
     });
 
@@ -1132,11 +1127,7 @@ function App() {
       .map((service, index) => normalizeCustomService(service, index))
       .filter((service) => service.name && service.basePrice > 0);
 
-    const parsedRenaissanceBaseOverrides = {};
-    Object.entries(pricingDraft.renaissanceBaseOverrides || {}).forEach(([key, value]) => {
-      const nextPrice = safeNumber(value);
-      if (nextPrice > 0) parsedRenaissanceBaseOverrides[key] = +nextPrice.toFixed(2);
-    });
+    const parsedRenaissanceTablePercent = +safeNumber(pricingDraft.renaissanceTablePercent).toFixed(2);
 
     const parsedRenaissanceAddOns = {
       alum032PerSqft: safeNumber(pricingDraft.renaissanceAddOns?.alum032PerSqft),
@@ -1153,7 +1144,7 @@ function App() {
       { setting_key: "tier_multipliers", setting_value: parsedTierMultipliers, updated_by: session.user.id },
       { setting_key: "line_price_overrides", setting_value: parsedLinePrices, updated_by: session.user.id },
       { setting_key: "custom_services", setting_value: parsedCustomServices, updated_by: session.user.id },
-      { setting_key: "renaissance_base_overrides", setting_value: parsedRenaissanceBaseOverrides, updated_by: session.user.id },
+      { setting_key: "renaissance_table_percent", setting_value: parsedRenaissanceTablePercent, updated_by: session.user.id },
       { setting_key: "renaissance_addon_overrides", setting_value: parsedRenaissanceAddOns, updated_by: session.user.id }
     ];
 
@@ -1166,7 +1157,7 @@ function App() {
       return;
     }
 
-    setPricingOverrides({ appDefaults: parsedDefaults, tierMultipliers: parsedTierMultipliers, linePrices: parsedLinePrices, customServices: parsedCustomServices, renaissanceBaseOverrides: parsedRenaissanceBaseOverrides, renaissanceAddOns: parsedRenaissanceAddOns });
+    setPricingOverrides({ appDefaults: parsedDefaults, tierMultipliers: parsedTierMultipliers, linePrices: parsedLinePrices, customServices: parsedCustomServices, renaissanceTablePercent: parsedRenaissanceTablePercent, renaissanceAddOns: parsedRenaissanceAddOns });
     setPricingSaving(false);
     setPricingMessage("Admin pricing saved to Supabase.");
   }
@@ -1197,34 +1188,6 @@ function App() {
       ...current,
       customServices: (current.customServices || []).filter((service) => service.id !== serviceId)
     }));
-  }
-
-  function applyRenaissanceBaseDraft() {
-    const styleKey = renaissanceBaseDraft.styleKey;
-    const width = safeNumber(renaissanceBaseDraft.width);
-    const projection = safeNumber(renaissanceBaseDraft.projection);
-    const price = safeNumber(renaissanceBaseDraft.price);
-    if (!styleKey || !width || !projection || !(price > 0)) {
-      setPricingMessage("Renaissance base override needs a style, width, projection, and price.");
-      return;
-    }
-    const overrideKey = `${styleKey}||${projection}||${width}`;
-    setPricingDraft((current) => ({
-      ...current,
-      renaissanceBaseOverrides: {
-        ...(current.renaissanceBaseOverrides || {}),
-        [overrideKey]: price
-      }
-    }));
-    setPricingMessage("Renaissance base override added to the draft. Save pricing to make it live.");
-  }
-
-  function removeRenaissanceBaseOverride(overrideKey) {
-    setPricingDraft((current) => {
-      const next = { ...(current.renaissanceBaseOverrides || {}) };
-      delete next[overrideKey];
-      return { ...current, renaissanceBaseOverrides: next };
-    });
   }
 
   function updateRenaissanceAddon(path, value) {
@@ -1810,46 +1773,16 @@ function App() {
                 <div className="section-head compact-head">
                   <div>
                     <h3>Renaissance standard pricing</h3>
-                    <p className="small-note">Change base table cells and common add-ons for Renaissance without editing the code.</p>
+                    <p className="small-note">Change the whole Renaissance base table at once with one percentage update instead of editing every width and projection.</p>
                   </div>
                 </div>
-                <div className="admin-pricing-grid">
+                <div className="admin-pricing-grid single-row-grid">
                   <label>
-                    Style
-                    <select value={renaissanceBaseDraft.styleKey} onChange={(e) => setRenaissanceBaseDraft((current) => ({ ...current, styleKey: e.target.value }))}>
-                      {Object.keys(appData.renaissance.styles).map((styleKey) => <option key={`style-${styleKey}`} value={styleKey}>{styleKey}</option>)}
-                    </select>
-                  </label>
-                  <label>
-                    Width
-                    <input type="number" inputMode="decimal" step="1" value={renaissanceBaseDraft.width} onChange={(e) => setRenaissanceBaseDraft((current) => ({ ...current, width: e.target.value }))} />
-                  </label>
-                  <label>
-                    Projection
-                    <input type="number" inputMode="decimal" step="1" value={renaissanceBaseDraft.projection} onChange={(e) => setRenaissanceBaseDraft((current) => ({ ...current, projection: e.target.value }))} />
-                  </label>
-                  <label>
-                    Base price override
-                    <input type="number" inputMode="decimal" step="0.01" value={renaissanceBaseDraft.price} onChange={(e) => setRenaissanceBaseDraft((current) => ({ ...current, price: e.target.value }))} />
+                    Table update percent
+                    <input type="number" inputMode="decimal" step="0.01" value={pricingDraft.renaissanceTablePercent ?? 0} onChange={(e) => setPricingDraft((current) => ({ ...current, renaissanceTablePercent: e.target.value }))} />
+                    <small className="small-note">Use positive numbers to raise pricing and negative numbers to lower it. Example: 5 = 5% increase, -3 = 3% decrease.</small>
                   </label>
                 </div>
-                <div className="toolbar-buttons inline-actions">
-                  <button className="ghost-btn" onClick={applyRenaissanceBaseDraft}>Add / update base price</button>
-                </div>
-                {!!Object.keys(pricingDraft.renaissanceBaseOverrides || {}).length && (
-                  <div className="admin-pricing-list compact-list">
-                    {Object.entries(pricingDraft.renaissanceBaseOverrides || {}).sort(([a], [b]) => a.localeCompare(b)).map(([overrideKey, value]) => (
-                      <div className="admin-line-price-row custom-service-row" key={`ren-base-${overrideKey}`}>
-                        <span>
-                          <strong>{formatRenaissanceOverrideLabel(overrideKey)}</strong>
-                          <small>Base table override</small>
-                        </span>
-                        <input type="number" inputMode="decimal" step="0.01" value={value} onChange={(e) => setPricingDraft((current) => ({ ...current, renaissanceBaseOverrides: { ...(current.renaissanceBaseOverrides || {}), [overrideKey]: e.target.value } }))} />
-                        <button className="ghost-btn danger-btn" onClick={() => removeRenaissanceBaseOverride(overrideKey)}>Remove</button>
-                      </div>
-                    ))}
-                  </div>
-                )}
                 <div className="admin-tier-grid renaissance-addon-grid">
                   <label>
                     .032 skin / sqft
