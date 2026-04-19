@@ -1918,6 +1918,90 @@ function App() {
                   </label>
                 </div>
               </div>
+              <div className="admin-subcard">
+                <div className="section-head compact-head">
+                  <div>
+                    <h3>GoHighLevel foundation</h3>
+                    <p className="small-note">Turn on quote sending and store your default GoHighLevel connection details here.</p>
+                  </div>
+                </div>
+                <div className="admin-tier-grid renaissance-addon-grid">
+                  <label className="check inline-check admin-inline-check">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(pricingDraft.ghlSettings?.enabled)}
+                      onChange={(e) => setPricingDraft((current) => ({
+                        ...current,
+                        ghlSettings: {
+                          ...(current.ghlSettings || {}),
+                          enabled: e.target.checked
+                        }
+                      }))}
+                    />
+                    <span>Enable GoHighLevel sending</span>
+                  </label>
+                  <label>
+                    Location ID
+                    <input
+                      type="text"
+                      value={pricingDraft.ghlSettings?.locationId || ""}
+                      onChange={(e) => setPricingDraft((current) => ({
+                        ...current,
+                        ghlSettings: {
+                          ...(current.ghlSettings || {}),
+                          locationId: e.target.value
+                        }
+                      }))}
+                      placeholder="Paste Location ID"
+                    />
+                  </label>
+                  <label>
+                    Default pipeline ID
+                    <input
+                      type="text"
+                      value={pricingDraft.ghlSettings?.defaultPipelineId || ""}
+                      onChange={(e) => setPricingDraft((current) => ({
+                        ...current,
+                        ghlSettings: {
+                          ...(current.ghlSettings || {}),
+                          defaultPipelineId: e.target.value
+                        }
+                      }))}
+                      placeholder="Optional pipeline ID"
+                    />
+                  </label>
+                  <label>
+                    Default opportunity stage ID
+                    <input
+                      type="text"
+                      value={pricingDraft.ghlSettings?.defaultOpportunityStageId || ""}
+                      onChange={(e) => setPricingDraft((current) => ({
+                        ...current,
+                        ghlSettings: {
+                          ...(current.ghlSettings || {}),
+                          defaultOpportunityStageId: e.target.value
+                        }
+                      }))}
+                      placeholder="Optional stage ID"
+                    />
+                  </label>
+                  <label>
+                    Company name
+                    <input
+                      type="text"
+                      value={pricingDraft.ghlSettings?.companyName || "S&S Design Build"}
+                      onChange={(e) => setPricingDraft((current) => ({
+                        ...current,
+                        ghlSettings: {
+                          ...(current.ghlSettings || {}),
+                          companyName: e.target.value
+                        }
+                      }))}
+                      placeholder="S&S Design Build"
+                    />
+                  </label>
+                </div>
+              </div>
             </>
           )}
         </section>
