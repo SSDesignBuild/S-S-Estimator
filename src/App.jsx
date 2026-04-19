@@ -80,6 +80,15 @@ function getPermissions(role) {
   };
 }
 
+function cleanJson(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function formatSupabaseError(error, fallback) {
+  if (!error) return fallback;
+  return error.message || error.details || error.hint || fallback;
+}
+
 function AccessDeniedScreen({ profile, onSignOut }) {
   return (
     <div className="auth-shell">
@@ -942,27 +951,7 @@ function App() {
       return;
     }
 
-    let cancelled = false;
-    async function loadQuotes() {
-      setQuotesLoading(true);
-      const { data, error } = await supabase
-        .from("quotes")
-        .select("id, customer_name, customer_email, customer_phone, city, county, tier, subtotal, tax, permit_fee, cash_price, financing_price, financed_amount, monthly_payment, financing_plan_name, status, created_at, updated_at, created_by")
-        .order("updated_at", { ascending: false })
-        .limit(25);
-      if (cancelled) return;
-      if (error) {
-        console.error("Load quotes failed", error);
-        setSavedQuotes([]);
-      } else {
-        setSavedQuotes(data || []);
-      }
-      setQuotesLoading(false);
-    }
-    loadQuotes();
-    return () => {
-      cancelled = true;
-    };
+    refreshSavedQuotes();
   }, [session?.user?.id, currentRole, permissions.canUseEstimator]);
 
   function hydrateQuoteSnapshot(snapshot) {
@@ -1004,6 +993,21 @@ function App() {
     setSaveLoading(true);
     setSaveMessage("");
 
+    const roleForSave = resolveRole(profile, session);
+    const sanitizedSnapshot = cleanJson({
+      selectedTier,
+      lineQtys,
+      settings,
+      customer,
+      selectedPlanId,
+      renaissance,
+      expanded,
+      toolbarOpen,
+      renaissanceOpen,
+      activeView,
+      searchTerm
+    });
+
     const quotePayload = {
       created_by: session.user.id,
       customer_name: customer.name || null,
@@ -1012,39 +1016,29 @@ function App() {
       city: settings.city || null,
       county: settings.county || null,
       tier: selectedTier,
-      quote_data: {
-        selectedTier,
-        lineQtys,
-        settings,
-        customer,
-        selectedPlanId,
-        renaissance,
-        expanded,
-        toolbarOpen,
-        renaissanceOpen,
-        activeView,
-        searchTerm
-      },
-      subtotal: +subtotal.toFixed(2),
-      tax: +salesTax.toFixed(2),
-      permit_fee: +permittingFee.toFixed(2),
-      cash_price: +totalNoFinancing.toFixed(2),
-      financing_price: +financedSaleAmount.toFixed(2),
-      financed_amount: +financedBase.toFixed(2),
-      monthly_payment: +monthlyPayment.toFixed(2),
-      financing_plan_name: selectedPlan.label,
+      quote_data: sanitizedSnapshot,
+      subtotal: Number.isFinite(subtotal) ? +subtotal.toFixed(2) : 0,
+      tax: Number.isFinite(salesTax) ? +salesTax.toFixed(2) : 0,
+      permit_fee: Number.isFinite(permittingFee) ? +permittingFee.toFixed(2) : 0,
+      cash_price: Number.isFinite(totalNoFinancing) ? +totalNoFinancing.toFixed(2) : 0,
+      financing_price: Number.isFinite(financedSaleAmount) ? +financedSaleAmount.toFixed(2) : 0,
+      financed_amount: Number.isFinite(financedBase) ? +financedBase.toFixed(2) : 0,
+      monthly_payment: Number.isFinite(monthlyPayment) ? +monthlyPayment.toFixed(2) : 0,
+      financing_plan_name: selectedPlan?.label || null,
       status: "draft"
     };
 
-    const lineRows = activeItems.map((item) => ({
-      category: item.category,
-      service_name: item.name,
-      unit: item.unit,
-      quantity: +item.qty,
-      unit_price: +item.displayPrice.toFixed(2),
-      line_total: +item.extended.toFixed(2),
-      source_type: "standard"
-    }));
+    const lineRows = activeItems
+      .map((item) => ({
+        category: item.category || "General",
+        service_name: item.name || "Line item",
+        unit: item.unit || null,
+        quantity: Number.isFinite(+item.qty) ? +item.qty : 0,
+        unit_price: Number.isFinite(item.displayPrice) ? +item.displayPrice.toFixed(2) : 0,
+        line_total: Number.isFinite(item.extended) ? +item.extended.toFixed(2) : 0,
+        source_type: "standard"
+      }))
+      .filter((row) => row.quantity > 0 || row.line_total > 0);
 
     if (renaissanceCalc.total > 0) {
       lineRows.push({
@@ -1057,6 +1051,7 @@ function App() {
         source_type: "renaissance"
       });
       renaissanceCalc.adders.forEach((adder) => {
+        if (!Number.isFinite(adder.amount) || adder.amount <= 0) return;
         lineRows.push({
           category: "Renaissance",
           service_name: adder.label,
@@ -1069,13 +1064,29 @@ function App() {
       });
     }
 
+    const { error: profileError } = await supabase.from("profiles").upsert({
+      id: session.user.id,
+      full_name: profile?.full_name || session.user.user_metadata?.full_name || "",
+      email: profile?.email || session.user.email || null,
+      role: roleForSave || "sales_rep"
+    }, { onConflict: "id" });
+
+    if (profileError) {
+      console.error("Profile sync before save failed", profileError);
+      setSaveLoading(false);
+      setSaveMessage(`Could not save quote: ${formatSupabaseError(profileError, "profile sync failed")}`);
+      return;
+    }
+
     let quoteId = selectedQuoteId;
+    const isUpdating = Boolean(quoteId);
+
     if (quoteId) {
       const { error: updateError } = await supabase.from("quotes").update(quotePayload).eq("id", quoteId);
       if (updateError) {
         console.error("Update quote failed", updateError);
         setSaveLoading(false);
-        setSaveMessage("Could not update quote.");
+        setSaveMessage(`Could not update quote: ${formatSupabaseError(updateError, "unknown error")}`);
         return;
       }
       const { error: deleteError } = await supabase.from("quote_lines").delete().eq("quote_id", quoteId);
@@ -1085,27 +1096,26 @@ function App() {
       if (insertError) {
         console.error("Save quote failed", insertError);
         setSaveLoading(false);
-        setSaveMessage("Could not save quote.");
+        setSaveMessage(`Could not save quote: ${formatSupabaseError(insertError, "unknown error")}`);
         return;
       }
       quoteId = inserted.id;
       setSelectedQuoteId(quoteId);
     }
 
+    let lineSaveWarning = "";
     if (lineRows.length) {
       const rows = lineRows.map((row) => ({ ...row, quote_id: quoteId }));
       const { error: linesError } = await supabase.from("quote_lines").insert(rows);
-      if (linesError) console.error("Save quote lines failed", linesError);
+      if (linesError) {
+        console.error("Save quote lines failed", linesError);
+        lineSaveWarning = ` Line items may need a follow-up save: ${formatSupabaseError(linesError, "line save failed")}`;
+      }
     }
 
-    const { data: refreshed } = await supabase
-      .from("quotes")
-      .select("id, customer_name, customer_email, customer_phone, city, county, tier, subtotal, tax, permit_fee, cash_price, financing_price, financed_amount, monthly_payment, financing_plan_name, status, created_at, updated_at, created_by")
-      .order("updated_at", { ascending: false })
-      .limit(25);
-    setSavedQuotes(refreshed || []);
+    await refreshSavedQuotes();
     setSaveLoading(false);
-    setSaveMessage(selectedQuoteId ? "Quote updated." : "Quote saved.");
+    setSaveMessage(`${isUpdating ? "Quote updated." : "Quote saved."}${lineSaveWarning}`);
   }
 
   async function handleLogin(event) {
