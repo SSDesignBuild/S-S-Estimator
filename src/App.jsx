@@ -59,6 +59,80 @@ function selectInputText(event) {
   }
 }
 
+
+const validRoles = ["admin", "manager", "sales_rep"];
+
+function formatRole(role) {
+  return (role || "sales_rep").replaceAll("_", " ");
+}
+
+function getPermissions(role) {
+  return {
+    canUseEstimator: validRoles.includes(role),
+    canViewTeamQuotes: role === "admin" || role === "manager",
+    canManagePricing: role === "admin",
+    canManageUsers: role === "admin",
+    canReviewTeamPerformance: role === "admin" || role === "manager"
+  };
+}
+
+function AccessDeniedScreen({ profile, onSignOut }) {
+  return (
+    <div className="auth-shell">
+      <div className="auth-card card">
+        <div className="brand-lockup auth-lockup">
+          <img className="brand-logo" src="/logo-mark.png" alt="S&S Design Build" />
+          <div>
+            <h1>Access needs review</h1>
+            <p>Your account is signed in, but it is missing a valid app role.</p>
+          </div>
+        </div>
+        <div className="access-denied-box">
+          <strong>Current role:</strong> {profile?.role || "No role assigned"}
+          <p className="small-note">Ask an admin to set your role to sales_rep, manager, or admin in Supabase.</p>
+        </div>
+        <button className="auth-submit" type="button" onClick={onSignOut}>Sign out</button>
+      </div>
+    </div>
+  );
+}
+
+function AccessPanel({ profile, permissions }) {
+  return (
+    <section className="access-panel card">
+      <div className="section-head compact-head">
+        <div>
+          <h2>Protected access</h2>
+          <p className="small-note">The estimator now understands rep, manager, and admin access.</p>
+        </div>
+        <span className={`role-pill role-${profile?.role || "sales_rep"}`}>{formatRole(profile?.role)}</span>
+      </div>
+      <div className="access-grid">
+        <div className="access-item">
+          <strong>Estimator access</strong>
+          <span>{permissions.canUseEstimator ? "Enabled" : "Blocked"}</span>
+          <p>Build quotes and use the estimator.</p>
+        </div>
+        <div className="access-item">
+          <strong>Team quote visibility</strong>
+          <span>{permissions.canViewTeamQuotes ? "Manager+" : "Own quotes only"}</span>
+          <p>Managers and admins will be able to see rep quotes once saved quotes are wired in.</p>
+        </div>
+        <div className="access-item">
+          <strong>Pricing controls</strong>
+          <span>{permissions.canManagePricing ? "Admin only" : "Locked"}</span>
+          <p>Pricing and rule edits stay protected until the admin panel is added.</p>
+        </div>
+        <div className="access-item">
+          <strong>User controls</strong>
+          <span>{permissions.canManageUsers ? "Admin only" : "Locked"}</span>
+          <p>Admins will manage users and roles from inside the app in a later step.</p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function organizeCategories(categories) {
   const engineeringIds = new Set([
     "outdoor-living-engineering-wood-structures",
@@ -439,7 +513,7 @@ function AuthScreen({ email, password, setEmail, setPassword, onSubmit, loading,
         </form>
 
         <p className="auth-help">
-          Admin can create rep accounts in Supabase. Managers can view team quotes once role rules are added.
+          Admin can create rep accounts in Supabase. Role access is now enforced for reps, managers, and admins.
         </p>
       </div>
     </div>
@@ -450,6 +524,7 @@ function App() {
   const [selectedTier, setSelectedTier] = useState("tier5");
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
+  const [profileLoading, setProfileLoading] = useState(false);
   const [authReady, setAuthReady] = useState(false);
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
@@ -492,10 +567,12 @@ function App() {
   useEffect(() => {
     if (!session?.user?.id) {
       setProfile(null);
+      setProfileLoading(false);
       return;
     }
 
     let isMounted = true;
+    setProfileLoading(true);
 
     supabase
       .from("profiles")
@@ -507,9 +584,11 @@ function App() {
         if (error) {
           console.error("Profile fetch failed", error);
           setProfile(null);
+          setProfileLoading(false);
           return;
         }
         setProfile(data ?? null);
+        setProfileLoading(false);
       });
 
     return () => {
@@ -583,6 +662,9 @@ function App() {
   }, [renaissance.section, renaissance.width, renaissance.projection, renaissance.frontOverhang, renaissance.sideOverhang, renaissance.supportBeams, renaissance.postCountOverride, renaissance.beamUpgrade, renaissance.windSpeed, renaissance.exposure]);
 
   const activeTier = appData.pricingTiers[selectedTier] || appData.pricingTiers.tier5;
+  const currentRole = profile?.role || "sales_rep";
+  const permissions = getPermissions(currentRole);
+  const hasValidRole = !profile || validRoles.includes(currentRole);
   const selectedPlan = financingPlans.find((plan) => plan.id === selectedPlanId) || financingPlans[0];
   const currentRenaissanceOptions = renaissanceSectionOptions[renaissance.section] || renaissanceSectionOptions.Moderno;
   const renaissanceStyleKey = renaissance.section;
@@ -889,6 +971,21 @@ function App() {
     );
   }
 
+  if (profileLoading) {
+    return (
+      <div className="auth-shell">
+        <div className="auth-card card">
+          <h1>Loading your access…</h1>
+          <p className="small-note">Checking your role and permissions.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (profile && !hasValidRole) {
+    return <AccessDeniedScreen profile={profile} onSignOut={handleSignOut} />;
+  }
+
   return (
     <div className="page-shell">
       <header className="topbar card">
@@ -901,7 +998,7 @@ function App() {
         <div className="topbar-actions">
           <div className="user-chip">
             <strong>{profile?.full_name || session.user.email}</strong>
-            <span>{(profile?.role || "sales_rep").replace("_", " ")}</span>
+            <span>{formatRole(profile?.role || "sales_rep")}</span>
           </div>
           <button className="ghost-btn" onClick={clearAll}>Clear inputs</button>
           <button className="ghost-btn" onClick={() => setSettingsOpen(true)}>Settings</button>
@@ -950,6 +1047,8 @@ function App() {
           </div>
         )}
       </section>
+
+      <AccessPanel profile={profile || { role: "sales_rep" }} permissions={permissions} />
 
       {settings.showCommission && (
         <section className="commission-box card">
@@ -1297,6 +1396,17 @@ function App() {
                 <input type="checkbox" checked={settings.showNoFinancingTotal} onChange={(e) => setSettings((current) => ({ ...current, showNoFinancingTotal: e.target.checked }))} />
                 <span>Show cash price</span>
               </label>
+            </div>
+
+            <div className="help-block access-help-block">
+              <h3>Access level</h3>
+              <div className="access-summary-list">
+                <div><strong>Signed in as:</strong> {profile?.full_name || session.user.email}</div>
+                <div><strong>Role:</strong> {formatRole(profile?.role || "sales_rep")}</div>
+                <div><strong>Estimator:</strong> {permissions.canUseEstimator ? "Enabled" : "Blocked"}</div>
+                <div><strong>Team quotes:</strong> {permissions.canViewTeamQuotes ? "Manager / admin access" : "Own quotes only"}</div>
+                <div><strong>Pricing editor:</strong> {permissions.canManagePricing ? "Admin access" : "Locked"}</div>
+              </div>
             </div>
 
             <div className="help-block">
