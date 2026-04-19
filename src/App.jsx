@@ -90,6 +90,31 @@ function formatSupabaseError(error, fallback) {
   return error.message || error.details || error.hint || fallback;
 }
 
+function normalizeGhlMapping(mapping, index = 0) {
+  const fallbackServiceKey = String(mapping?.serviceKey || mapping?.service_key || '').trim() || `manual-${index + 1}`;
+  const priceIds = mapping?.priceIds || mapping?.price_ids || {};
+  return {
+    serviceKey: fallbackServiceKey,
+    label: String(mapping?.label || mapping?.serviceName || mapping?.service_name || fallbackServiceKey).trim() || fallbackServiceKey,
+    productId: String(mapping?.productId || mapping?.product_id || '').trim(),
+    priceIds: {
+      volume: String(priceIds.volume || '').trim(),
+      tier5: String(priceIds.tier5 || '').trim(),
+      tier7_5: String(priceIds.tier7_5 || '').trim(),
+      tier10: String(priceIds.tier10 || '').trim(),
+      tier15: String(priceIds.tier15 || '').trim(),
+    },
+  };
+}
+
+function tierToMappingKey(tier) {
+  if (tier === 'volume') return 'volume';
+  if (tier === 'tier5') return 'tier5';
+  if (tier === 'tier7_5') return 'tier7_5';
+  if (tier === 'tier10') return 'tier10';
+  return 'tier15';
+}
+
 function AccessDeniedScreen({ profile, onSignOut }) {
   return (
     <div className="auth-shell">
@@ -627,8 +652,8 @@ function App() {
   const [financingOpen, setFinancingOpen] = useState(false);
   const [activeView, setActiveView] = useState("standard");
   const [searchTerm, setSearchTerm] = useState("");
-  const [pricingOverrides, setPricingOverrides] = useState({ appDefaults: {}, tierMultipliers: {}, linePrices: {}, customServices: [], renaissanceTablePercent: 0, renaissanceAddOns: {} });
-  const [pricingDraft, setPricingDraft] = useState({ appDefaults: {}, tierMultipliers: {}, linePrices: {}, customServices: [], renaissanceTablePercent: 0, renaissanceAddOns: {}, ghlSettings: {} });
+  const [pricingOverrides, setPricingOverrides] = useState({ appDefaults: {}, tierMultipliers: {}, linePrices: {}, customServices: [], renaissanceTablePercent: 0, renaissanceAddOns: {}, ghlSettings: {}, ghlMappings: [] });
+  const [pricingDraft, setPricingDraft] = useState({ appDefaults: {}, tierMultipliers: {}, linePrices: {}, customServices: [], renaissanceTablePercent: 0, renaissanceAddOns: {}, ghlSettings: {}, ghlMappings: [] });
   const [pricingLoading, setPricingLoading] = useState(false);
   const [pricingSaving, setPricingSaving] = useState(false);
   const [pricingMessage, setPricingMessage] = useState("");
@@ -814,9 +839,10 @@ function App() {
         defaultPipelineId: String(pricingOverrides.ghlSettings?.defaultPipelineId || ""),
         defaultOpportunityStageId: String(pricingOverrides.ghlSettings?.defaultOpportunityStageId || ""),
         companyName: String(pricingOverrides.ghlSettings?.companyName || "S&S Design Build")
-      }
+      },
+      ghlMappings: (pricingOverrides.ghlMappings || []).map((mapping, index) => normalizeGhlMapping(mapping, index))
     });
-  }, [effectiveAppDefaults, pricingTiers, pricingOverrides.linePrices, pricingOverrides.customServices, pricingOverrides.renaissanceTablePercent, renaissanceAddOns, pricingOverrides.ghlSettings]);
+  }, [effectiveAppDefaults, pricingTiers, pricingOverrides.linePrices, pricingOverrides.customServices, pricingOverrides.renaissanceTablePercent, renaissanceAddOns, pricingOverrides.ghlSettings, pricingOverrides.ghlMappings]);
 
   useEffect(() => {
     setRenaissance((current) => ({ ...current, beamLength: Math.max(safeNumber(current.width) - safeNumber(current.sideOverhang) * 2, 0) }));
@@ -1092,7 +1118,7 @@ function App() {
     const { data, error } = await supabase
       .from("pricing_settings")
       .select("setting_key, setting_value")
-      .in("setting_key", ["app_defaults", "tier_multipliers", "line_price_overrides", "custom_services", "renaissance_table_percent", "renaissance_addon_overrides", "ghl_settings"]);
+      .in("setting_key", ["app_defaults", "tier_multipliers", "line_price_overrides", "custom_services", "renaissance_table_percent", "renaissance_addon_overrides", "ghl_settings", "ghl_product_mappings"]);
 
     if (error) {
       console.error("Load pricing settings failed", error);
@@ -1101,7 +1127,7 @@ function App() {
       return;
     }
 
-    const next = { appDefaults: {}, tierMultipliers: {}, linePrices: {}, customServices: [], renaissanceTablePercent: 0, renaissanceAddOns: {}, ghlSettings: {} };
+    const next = { appDefaults: {}, tierMultipliers: {}, linePrices: {}, customServices: [], renaissanceTablePercent: 0, renaissanceAddOns: {}, ghlSettings: {}, ghlMappings: [] };
     (data || []).forEach((row) => {
       if (row.setting_key === "app_defaults" && row.setting_value) next.appDefaults = row.setting_value;
       if (row.setting_key === "tier_multipliers" && row.setting_value) next.tierMultipliers = row.setting_value;
@@ -1110,6 +1136,7 @@ function App() {
       if (row.setting_key === "renaissance_table_percent" && row.setting_value != null) next.renaissanceTablePercent = safeNumber(row.setting_value);
       if (row.setting_key === "renaissance_addon_overrides" && row.setting_value) next.renaissanceAddOns = row.setting_value;
       if (row.setting_key === "ghl_settings" && row.setting_value) next.ghlSettings = row.setting_value;
+      if (row.setting_key === "ghl_product_mappings" && row.setting_value) next.ghlMappings = Array.isArray(row.setting_value) ? row.setting_value : [];
     });
 
     setPricingOverrides(next);
@@ -1159,6 +1186,10 @@ function App() {
       companyName: String(pricingDraft.ghlSettings?.companyName || "S&S Design Build").trim() || "S&S Design Build"
     };
 
+    const parsedGhlMappings = (pricingDraft.ghlMappings || [])
+      .map((mapping, index) => normalizeGhlMapping(mapping, index))
+      .filter((mapping) => mapping.serviceKey && (mapping.productId || Object.values(mapping.priceIds || {}).some(Boolean)));
+
     const rows = [
       { setting_key: "app_defaults", setting_value: parsedDefaults, updated_by: session.user.id },
       { setting_key: "tier_multipliers", setting_value: parsedTierMultipliers, updated_by: session.user.id },
@@ -1166,7 +1197,8 @@ function App() {
       { setting_key: "custom_services", setting_value: parsedCustomServices, updated_by: session.user.id },
       { setting_key: "renaissance_table_percent", setting_value: parsedRenaissanceTablePercent, updated_by: session.user.id },
       { setting_key: "renaissance_addon_overrides", setting_value: parsedRenaissanceAddOns, updated_by: session.user.id },
-      { setting_key: "ghl_settings", setting_value: parsedGhlSettings, updated_by: session.user.id }
+      { setting_key: "ghl_settings", setting_value: parsedGhlSettings, updated_by: session.user.id },
+      { setting_key: "ghl_product_mappings", setting_value: parsedGhlMappings, updated_by: session.user.id }
     ];
 
     const { error } = await supabase.from("pricing_settings").upsert(rows, { onConflict: "setting_key" });
@@ -1178,7 +1210,7 @@ function App() {
       return;
     }
 
-    setPricingOverrides({ appDefaults: parsedDefaults, tierMultipliers: parsedTierMultipliers, linePrices: parsedLinePrices, customServices: parsedCustomServices, renaissanceTablePercent: parsedRenaissanceTablePercent, renaissanceAddOns: parsedRenaissanceAddOns, ghlSettings: parsedGhlSettings });
+    setPricingOverrides({ appDefaults: parsedDefaults, tierMultipliers: parsedTierMultipliers, linePrices: parsedLinePrices, customServices: parsedCustomServices, renaissanceTablePercent: parsedRenaissanceTablePercent, renaissanceAddOns: parsedRenaissanceAddOns, ghlSettings: parsedGhlSettings, ghlMappings: parsedGhlMappings });
     setPricingSaving(false);
     setPricingMessage("Admin pricing saved to Supabase.");
   }
@@ -1208,6 +1240,70 @@ function App() {
     setPricingDraft((current) => ({
       ...current,
       customServices: (current.customServices || []).filter((service) => service.id !== serviceId)
+    }));
+  }
+
+  function buildDefaultGhlMappings() {
+    const baseRows = categories.flatMap((cat) => cat.items.map((item) => ({
+      serviceKey: item.id,
+      label: `${cat.name} • ${item.name}`,
+      productId: "",
+      priceIds: { volume: "", tier5: "", tier7_5: "", tier10: "", tier15: "" }
+    })));
+    const specialRows = [
+      { serviceKey: 'renaissance-main', label: 'Renaissance main cover', productId: '', priceIds: { volume: '', tier5: '', tier7_5: '', tier10: '', tier15: '' } },
+      { serviceKey: 'renaissance-roof-color', label: 'Renaissance roof color', productId: '', priceIds: { volume: '', tier5: '', tier7_5: '', tier10: '', tier15: '' } },
+      { serviceKey: 'renaissance-heavy-foam-upgrade', label: 'Renaissance heavy foam upgrade', productId: '', priceIds: { volume: '', tier5: '', tier7_5: '', tier10: '', tier15: '' } },
+      { serviceKey: 'renaissance-032-skin-upgrade', label: 'Renaissance .032 skin upgrade', productId: '', priceIds: { volume: '', tier5: '', tier7_5: '', tier10: '', tier15: '' } },
+      { serviceKey: 'renaissance-front-main-post-upgrade-hd', label: 'Renaissance front/main post upgrade (hd)', productId: '', priceIds: { volume: '', tier5: '', tier7_5: '', tier10: '', tier15: '' } },
+      { serviceKey: 'renaissance-front-main-post-upgrade-wide', label: 'Renaissance front/main post upgrade (wide)', productId: '', priceIds: { volume: '', tier5: '', tier7_5: '', tier10: '', tier15: '' } },
+      { serviceKey: 'renaissance-front-main-post-upgrade-wideinsert', label: 'Renaissance front/main post upgrade (wideinsert)', productId: '', priceIds: { volume: '', tier5: '', tier7_5: '', tier10: '', tier15: '' } },
+      { serviceKey: 'renaissance-front-main-beam-upgrade-hd', label: 'Renaissance front/main beam upgrade (hd)', productId: '', priceIds: { volume: '', tier5: '', tier7_5: '', tier10: '', tier15: '' } },
+      { serviceKey: 'renaissance-front-main-beam-upgrade-wide', label: 'Renaissance front/main beam upgrade (wide)', productId: '', priceIds: { volume: '', tier5: '', tier7_5: '', tier10: '', tier15: '' } },
+      { serviceKey: 'renaissance-front-main-beam-upgrade-wideinsert', label: 'Renaissance front/main beam upgrade (wideinsert)', productId: '', priceIds: { volume: '', tier5: '', tier7_5: '', tier10: '', tier15: '' } },
+      { serviceKey: 'renaissance-added-support-beam-rows', label: 'Renaissance added support beam rows', productId: '', priceIds: { volume: '', tier5: '', tier7_5: '', tier10: '', tier15: '' } },
+      { serviceKey: 'renaissance-added-support-post-rows', label: 'Renaissance added support post rows', productId: '', priceIds: { volume: '', tier5: '', tier7_5: '', tier10: '', tier15: '' } },
+      { serviceKey: 'renaissance-fan-beams', label: 'Renaissance fan beams', productId: '', priceIds: { volume: '', tier5: '', tier7_5: '', tier10: '', tier15: '' } },
+    ];
+    return [...baseRows, ...specialRows];
+  }
+
+  function seedGhlMappingsDraft() {
+    setPricingDraft((current) => {
+      const existing = new Map((current.ghlMappings || []).map((mapping, index) => {
+        const normalized = normalizeGhlMapping(mapping, index);
+        return [normalized.serviceKey, normalized];
+      }));
+      const merged = buildDefaultGhlMappings().map((mapping, index) => existing.get(mapping.serviceKey) || normalizeGhlMapping(mapping, index));
+      return { ...current, ghlMappings: merged };
+    });
+    setPricingMessage('Seeded the GoHighLevel mapping grid with current estimator services. Fill in product IDs and price IDs, then save pricing.');
+  }
+
+  function addManualGhlMappingRow() {
+    setPricingDraft((current) => ({
+      ...current,
+      ghlMappings: [...(current.ghlMappings || []), normalizeGhlMapping({ serviceKey: `manual-${(current.ghlMappings || []).length + 1}`, label: 'Manual mapping row' }, (current.ghlMappings || []).length)]
+    }));
+  }
+
+  function updateGhlMappingDraft(index, field, value, tierKey = null) {
+    setPricingDraft((current) => ({
+      ...current,
+      ghlMappings: (current.ghlMappings || []).map((mapping, mappingIndex) => {
+        if (mappingIndex !== index) return mapping;
+        if (field === 'priceIds' && tierKey) {
+          return { ...mapping, priceIds: { ...(mapping.priceIds || {}), [tierKey]: value } };
+        }
+        return { ...mapping, [field]: value };
+      })
+    }));
+  }
+
+  function removeGhlMappingDraft(index) {
+    setPricingDraft((current) => ({
+      ...current,
+      ghlMappings: (current.ghlMappings || []).filter((_, mappingIndex) => mappingIndex !== index)
     }));
   }
 
@@ -1334,6 +1430,8 @@ function App() {
   function buildQuoteLineRows() {
     const rows = activeItems
       .map((item) => ({
+        service_key: item.id,
+        tier_key: selectedTier,
         category: item.category || "General",
         service_name: item.name || "Line item",
         unit: item.unit || null,
@@ -1346,6 +1444,8 @@ function App() {
 
     if (renaissanceCalc.total > 0) {
       rows.push({
+        service_key: "renaissance-main",
+        tier_key: selectedTier,
         category: "Renaissance",
         service_name: `${renaissanceCalc.key} ${renaissanceCalc.width}' x ${renaissanceCalc.projection}'`,
         unit: "Each",
@@ -1357,6 +1457,8 @@ function App() {
       renaissanceCalc.adders.forEach((adder) => {
         if (!Number.isFinite(adder.amount) || adder.amount <= 0) return;
         rows.push({
+          service_key: `renaissance-${slugify(adder.label)}`,
+          tier_key: selectedTier,
           category: "Renaissance",
           service_name: adder.label,
           unit: "Each",
@@ -1408,7 +1510,8 @@ function App() {
         pipelineId: ghlSettings.defaultPipelineId || null,
         opportunityStageId: ghlSettings.defaultOpportunityStageId || null,
         companyName: ghlSettings.companyName || "S&S Design Build"
-      }
+      },
+      ghlMappings: pricingOverrides?.ghlMappings || []
     };
 
     const { data, error } = await sendQuoteToGhl(supabase, payload);
@@ -2007,6 +2110,33 @@ function App() {
                       placeholder="S&S Design Build"
                     />
                   </label>
+                </div>
+              </div>
+              <div className="admin-subcard">
+                <div className="section-head compact-head">
+                  <div>
+                    <h3>GoHighLevel product mapping</h3>
+                    <p className="small-note">Map estimator service keys to your existing HighLevel product and tier price IDs. Unmapped rows still send as exact custom line items.</p>
+                  </div>
+                  <div className="toolbar-buttons inline-actions">
+                    <button className="ghost-btn" onClick={seedGhlMappingsDraft}>Seed current services</button>
+                    <button className="ghost-btn" onClick={addManualGhlMappingRow}>Add manual row</button>
+                  </div>
+                </div>
+                <div className="admin-pricing-list compact-list ghl-mapping-list">
+                  {(pricingDraft.ghlMappings || []).map((mapping, index) => (
+                    <div className="ghl-mapping-row" key={`ghl-mapping-${mapping.serviceKey}-${index}`}>
+                      <input type="text" placeholder="Service key" value={mapping.serviceKey || ''} onChange={(e) => updateGhlMappingDraft(index, 'serviceKey', e.target.value)} />
+                      <input type="text" placeholder="Label" value={mapping.label || ''} onChange={(e) => updateGhlMappingDraft(index, 'label', e.target.value)} />
+                      <input type="text" placeholder="Product ID" value={mapping.productId || ''} onChange={(e) => updateGhlMappingDraft(index, 'productId', e.target.value)} />
+                      <input type="text" placeholder="Volume price ID" value={mapping.priceIds?.volume || ''} onChange={(e) => updateGhlMappingDraft(index, 'priceIds', e.target.value, 'volume')} />
+                      <input type="text" placeholder="5 price ID" value={mapping.priceIds?.tier5 || ''} onChange={(e) => updateGhlMappingDraft(index, 'priceIds', e.target.value, 'tier5')} />
+                      <input type="text" placeholder="7.5 price ID" value={mapping.priceIds?.tier7_5 || ''} onChange={(e) => updateGhlMappingDraft(index, 'priceIds', e.target.value, 'tier7_5')} />
+                      <input type="text" placeholder="10 price ID" value={mapping.priceIds?.tier10 || ''} onChange={(e) => updateGhlMappingDraft(index, 'priceIds', e.target.value, 'tier10')} />
+                      <input type="text" placeholder="15 price ID" value={mapping.priceIds?.tier15 || ''} onChange={(e) => updateGhlMappingDraft(index, 'priceIds', e.target.value, 'tier15')} />
+                      <button className="ghost-btn danger-btn" onClick={() => removeGhlMappingDraft(index)}>Remove</button>
+                    </div>
+                  ))}
                 </div>
               </div>
             </>

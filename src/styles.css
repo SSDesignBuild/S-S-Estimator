@@ -1183,3 +1183,28 @@ textarea:focus {
     grid-template-columns: 1fr;
   }
 }
+
+.ghl-mapping-list {
+  gap: 0.75rem;
+}
+
+.ghl-mapping-row {
+  display: grid;
+  grid-template-columns: 1.2fr 1.4fr 1.2fr repeat(5, 1fr) auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.ghl-mapping-row input {
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .ghl-mapping-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .ghl-mapping-row .ghost-btn {
+    grid-column: span 2;
+  }
+}
