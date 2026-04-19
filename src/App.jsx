@@ -168,6 +168,56 @@ function organizeCategories(categories) {
   return uiCategories;
 }
 
+function normalizeCustomService(service, index = 0) {
+  const category = String(service?.category || service?.categoryName || "Custom Services").trim() || "Custom Services";
+  const name = String(service?.name || service?.service_name || "").trim();
+  const unit = String(service?.unit || "Each").trim() || "Each";
+  const basePrice = safeNumber(service?.basePrice ?? service?.price);
+  const fallbackId = `custom-${slugify(category)}-${slugify(name || `item-${index + 1}`)}`;
+  const id = String(service?.id || fallbackId).trim() || fallbackId;
+  return { id, category, name, unit, basePrice: +basePrice.toFixed(2) };
+}
+
+function mergeCategoriesWithCustomServices(baseCategories, customServices) {
+  const merged = baseCategories.map((cat) => ({ ...cat, items: [...cat.items] }));
+  const byName = new Map(merged.map((cat) => [cat.name, cat]));
+
+  (customServices || []).forEach((raw, index) => {
+    const service = normalizeCustomService(raw, index);
+    if (!service.name || !Number.isFinite(service.basePrice)) return;
+    let category = byName.get(service.category);
+    if (!category) {
+      category = { name: service.category, items: [] };
+      merged.push(category);
+      byName.set(service.category, category);
+    }
+    const existingIndex = category.items.findIndex((item) => item.id === service.id);
+    const item = { id: service.id, name: service.name, unit: service.unit, basePrice: service.basePrice, isCustom: true };
+    if (existingIndex >= 0) category.items[existingIndex] = item;
+    else category.items.push(item);
+  });
+
+  return merged.filter((cat) => cat.items.length);
+}
+
+function buildRenaissanceStylesWithOverrides(styles, overrides) {
+  const merged = JSON.parse(JSON.stringify(styles || {}));
+  Object.entries(overrides || {}).forEach(([compoundKey, price]) => {
+    const [styleKey, projection, width] = compoundKey.split("||");
+    if (!styleKey || !projection || !width) return;
+    if (!merged[styleKey]) merged[styleKey] = {};
+    if (!merged[styleKey][projection]) merged[styleKey][projection] = {};
+    merged[styleKey][projection][width] = safeNumber(price);
+  });
+  return merged;
+}
+
+function formatRenaissanceOverrideLabel(compoundKey) {
+  const [styleKey, projection, width] = String(compoundKey || "").split("||");
+  if (!styleKey || !projection || !width) return compoundKey;
+  return `${styleKey} | ${width}' W x ${projection}' P`;
+}
+
 const baseUiCategories = organizeCategories(appData.categories);
 const defaultLineState = Object.fromEntries(baseUiCategories.flatMap((cat) => cat.items.map((item) => [item.id, ""])));
 const defaultExpanded = Object.fromEntries(baseUiCategories.map((cat) => [cat.name, false]));
@@ -472,6 +522,13 @@ function getBaseProjectionPrice(table, width, projection) {
   return Math.round(low + (high - low) * ratio);
 }
 
+function slugify(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "item";
+}
+
 function getFanBeamUnit(addOns, projection) {
   if (projection === 10) {
     const explicit10 = safeNumber(addOns.fanBeamByProjection?.["10"]);
@@ -571,13 +628,15 @@ function App() {
   const [financingOpen, setFinancingOpen] = useState(false);
   const [activeView, setActiveView] = useState("standard");
   const [searchTerm, setSearchTerm] = useState("");
-  const [pricingOverrides, setPricingOverrides] = useState({ appDefaults: {}, tierMultipliers: {}, linePrices: {} });
-  const [pricingDraft, setPricingDraft] = useState({ appDefaults: {}, tierMultipliers: {}, linePrices: {} });
+  const [pricingOverrides, setPricingOverrides] = useState({ appDefaults: {}, tierMultipliers: {}, linePrices: {}, customServices: [], renaissanceBaseOverrides: {}, renaissanceAddOns: {} });
+  const [pricingDraft, setPricingDraft] = useState({ appDefaults: {}, tierMultipliers: {}, linePrices: {}, customServices: [], renaissanceBaseOverrides: {}, renaissanceAddOns: {} });
   const [pricingLoading, setPricingLoading] = useState(false);
   const [pricingSaving, setPricingSaving] = useState(false);
   const [pricingMessage, setPricingMessage] = useState("");
   const [pricingEditorOpen, setPricingEditorOpen] = useState(false);
   const [pricingEditorSearch, setPricingEditorSearch] = useState("");
+  const [newServiceDraft, setNewServiceDraft] = useState({ category: "Custom Services", name: "", unit: "Each", basePrice: "" });
+  const [renaissanceBaseDraft, setRenaissanceBaseDraft] = useState({ styleKey: "Moderno Attached", width: 10, projection: 10, price: "" });
   const touchStartX = useRef(null);
 
   useEffect(() => {
@@ -698,7 +757,41 @@ function App() {
 
   const pricingTiers = useMemo(() => Object.fromEntries(Object.entries(appData.pricingTiers).map(([key, tier]) => [key, { ...tier, multiplier: pricingOverrides.tierMultipliers?.[key] ?? tier.multiplier }])), [pricingOverrides.tierMultipliers]);
   const effectiveAppDefaults = useMemo(() => ({ ...appData.defaultSettings, ...pricingOverrides.appDefaults }), [pricingOverrides.appDefaults]);
-  const categories = useMemo(() => baseUiCategories.map((cat) => ({ ...cat, items: cat.items.map((item) => ({ ...item, basePrice: pricingOverrides.linePrices?.[item.id] ?? item.basePrice })) })), [pricingOverrides.linePrices]);
+  const mergedRenaissanceStyles = useMemo(() => buildRenaissanceStylesWithOverrides(appData.renaissance.styles, pricingOverrides.renaissanceBaseOverrides), [pricingOverrides.renaissanceBaseOverrides]);
+  const renaissanceAddOns = useMemo(() => ({
+    ...appData.renaissance.addOns,
+    ...pricingOverrides.renaissanceAddOns,
+    fanBeamByProjection: {
+      ...appData.renaissance.addOns.fanBeamByProjection,
+      ...(pricingOverrides.renaissanceAddOns?.fanBeamByProjection || {})
+    },
+    postUpgradeEach: {
+      ...appData.renaissance.addOns.postUpgradeEach,
+      ...(pricingOverrides.renaissanceAddOns?.postUpgradeEach || {})
+    },
+    beamUpgradePerFoot: {
+      ...appData.renaissance.addOns.beamUpgradePerFoot,
+      ...(pricingOverrides.renaissanceAddOns?.beamUpgradePerFoot || {})
+    }
+  }), [pricingOverrides.renaissanceAddOns]);
+  const categories = useMemo(() => mergeCategoriesWithCustomServices(
+    baseUiCategories.map((cat) => ({ ...cat, items: cat.items.map((item) => ({ ...item, basePrice: pricingOverrides.linePrices?.[item.id] ?? item.basePrice })) })),
+    pricingOverrides.customServices
+  ), [pricingOverrides.linePrices, pricingOverrides.customServices]);
+
+  useEffect(() => {
+    setExpanded((current) => {
+      const next = { ...current };
+      let changed = false;
+      categories.forEach((cat) => {
+        if (!(cat.name in next)) {
+          next[cat.name] = false;
+          changed = true;
+        }
+      });
+      return changed ? next : current;
+    });
+  }, [categories]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = settings.darkMode ? "dark" : "light";
@@ -713,9 +806,12 @@ function App() {
         financingMarkup: String(effectiveAppDefaults.financingMarkup ?? "")
       },
       tierMultipliers: Object.fromEntries(Object.keys(pricingTiers).map((key) => [key, String(pricingTiers[key]?.multiplier ?? "")])),
-      linePrices: Object.fromEntries(baseUiCategories.flatMap((cat) => cat.items.map((item) => [item.id, String(pricingOverrides.linePrices?.[item.id] ?? item.basePrice)])))
+      linePrices: Object.fromEntries(baseUiCategories.flatMap((cat) => cat.items.map((item) => [item.id, String(pricingOverrides.linePrices?.[item.id] ?? item.basePrice)]))),
+      customServices: (pricingOverrides.customServices || []).map((service, index) => normalizeCustomService(service, index)),
+      renaissanceBaseOverrides: { ...(pricingOverrides.renaissanceBaseOverrides || {}) },
+      renaissanceAddOns: cleanJson(renaissanceAddOns)
     });
-  }, [effectiveAppDefaults, pricingTiers, pricingOverrides.linePrices]);
+  }, [effectiveAppDefaults, pricingTiers, pricingOverrides.linePrices, pricingOverrides.customServices, pricingOverrides.renaissanceBaseOverrides, renaissanceAddOns]);
 
   useEffect(() => {
     setRenaissance((current) => ({ ...current, beamLength: Math.max(safeNumber(current.width) - safeNumber(current.sideOverhang) * 2, 0) }));
@@ -776,7 +872,7 @@ function App() {
           return { ...item, category: cat.name, qty, extended, displayPrice: item.basePrice * activeTier.multiplier };
         })
       ),
-    [lineQtys, activeTier.multiplier]
+    [categories, lineQtys, activeTier.multiplier]
   );
 
   const activeItems = lineItems.filter((item) => item.qty > 0);
@@ -784,7 +880,7 @@ function App() {
 
   const renaissanceCalc = useMemo(() => {
     const key = getRenaissanceKey(renaissance.section, renaissance.mount, renaissance.profile);
-    const table = appData.renaissance.styles[key] || {};
+    const table = mergedRenaissanceStyles[key] || {};
     const width = safeNumber(renaissance.width);
     const projection = safeNumber(renaissance.projection);
     const frontOverhang = safeNumber(renaissance.frontOverhang);
@@ -804,7 +900,7 @@ function App() {
     const postCount = safeNumber(renaissance.postCountOverride || postCountRequired);
     const beamLength = framedWidth || 0;
     const rsqft = roofSqft(renaissance.mount, width, projection);
-    const addOns = appData.renaissance.addOns;
+    const addOns = renaissanceAddOns;
     const fanBeamUnit = getFanBeamUnit(addOns, projection);
     const fanBeamCount = safeNumber(renaissance.fanBeams);
 
@@ -883,7 +979,7 @@ function App() {
       usesProjectedMath: projection > 16 && !!base,
       spanTableDriven: !!(width && projection)
     };
-  }, [renaissance, activeTier.multiplier]);
+  }, [renaissance, activeTier.multiplier, mergedRenaissanceStyles, renaissanceAddOns]);
 
   const standardSubtotal = useMemo(() => lineItems.reduce((sum, item) => sum + item.extended, 0), [lineItems]);
   const subtotal = standardSubtotal + renaissanceCalc.total;
@@ -990,7 +1086,7 @@ function App() {
     const { data, error } = await supabase
       .from("pricing_settings")
       .select("setting_key, setting_value")
-      .in("setting_key", ["app_defaults", "tier_multipliers", "line_price_overrides"]);
+      .in("setting_key", ["app_defaults", "tier_multipliers", "line_price_overrides", "custom_services", "renaissance_base_overrides", "renaissance_addon_overrides"]);
 
     if (error) {
       console.error("Load pricing settings failed", error);
@@ -999,11 +1095,14 @@ function App() {
       return;
     }
 
-    const next = { appDefaults: {}, tierMultipliers: {}, linePrices: {} };
+    const next = { appDefaults: {}, tierMultipliers: {}, linePrices: {}, customServices: [], renaissanceBaseOverrides: {}, renaissanceAddOns: {} };
     (data || []).forEach((row) => {
       if (row.setting_key === "app_defaults" && row.setting_value) next.appDefaults = row.setting_value;
       if (row.setting_key === "tier_multipliers" && row.setting_value) next.tierMultipliers = row.setting_value;
       if (row.setting_key === "line_price_overrides" && row.setting_value) next.linePrices = row.setting_value;
+      if (row.setting_key === "custom_services" && row.setting_value) next.customServices = Array.isArray(row.setting_value) ? row.setting_value : [];
+      if (row.setting_key === "renaissance_base_overrides" && row.setting_value) next.renaissanceBaseOverrides = row.setting_value;
+      if (row.setting_key === "renaissance_addon_overrides" && row.setting_value) next.renaissanceAddOns = row.setting_value;
     });
 
     setPricingOverrides(next);
@@ -1029,10 +1128,33 @@ function App() {
       if (nextPrice > 0 && Math.abs(nextPrice - basePrice) > 0.0001) parsedLinePrices[itemId] = +nextPrice.toFixed(2);
     });
 
+    const parsedCustomServices = (pricingDraft.customServices || [])
+      .map((service, index) => normalizeCustomService(service, index))
+      .filter((service) => service.name && service.basePrice > 0);
+
+    const parsedRenaissanceBaseOverrides = {};
+    Object.entries(pricingDraft.renaissanceBaseOverrides || {}).forEach(([key, value]) => {
+      const nextPrice = safeNumber(value);
+      if (nextPrice > 0) parsedRenaissanceBaseOverrides[key] = +nextPrice.toFixed(2);
+    });
+
+    const parsedRenaissanceAddOns = {
+      alum032PerSqft: safeNumber(pricingDraft.renaissanceAddOns?.alum032PerSqft),
+      heavyFoamPerSqft: safeNumber(pricingDraft.renaissanceAddOns?.heavyFoamPerSqft),
+      customRoofColorPerSqft: safeNumber(pricingDraft.renaissanceAddOns?.customRoofColorPerSqft),
+      deductPost: safeNumber(pricingDraft.renaissanceAddOns?.deductPost),
+      fanBeamByProjection: Object.fromEntries(Object.entries(pricingDraft.renaissanceAddOns?.fanBeamByProjection || {}).map(([key, value]) => [key, safeNumber(value)])),
+      postUpgradeEach: Object.fromEntries(Object.entries(pricingDraft.renaissanceAddOns?.postUpgradeEach || {}).map(([key, value]) => [key, safeNumber(value)])),
+      beamUpgradePerFoot: Object.fromEntries(Object.entries(pricingDraft.renaissanceAddOns?.beamUpgradePerFoot || {}).map(([key, value]) => [key, safeNumber(value)]))
+    };
+
     const rows = [
       { setting_key: "app_defaults", setting_value: parsedDefaults, updated_by: session.user.id },
       { setting_key: "tier_multipliers", setting_value: parsedTierMultipliers, updated_by: session.user.id },
-      { setting_key: "line_price_overrides", setting_value: parsedLinePrices, updated_by: session.user.id }
+      { setting_key: "line_price_overrides", setting_value: parsedLinePrices, updated_by: session.user.id },
+      { setting_key: "custom_services", setting_value: parsedCustomServices, updated_by: session.user.id },
+      { setting_key: "renaissance_base_overrides", setting_value: parsedRenaissanceBaseOverrides, updated_by: session.user.id },
+      { setting_key: "renaissance_addon_overrides", setting_value: parsedRenaissanceAddOns, updated_by: session.user.id }
     ];
 
     const { error } = await supabase.from("pricing_settings").upsert(rows, { onConflict: "setting_key" });
@@ -1044,9 +1166,74 @@ function App() {
       return;
     }
 
-    setPricingOverrides({ appDefaults: parsedDefaults, tierMultipliers: parsedTierMultipliers, linePrices: parsedLinePrices });
+    setPricingOverrides({ appDefaults: parsedDefaults, tierMultipliers: parsedTierMultipliers, linePrices: parsedLinePrices, customServices: parsedCustomServices, renaissanceBaseOverrides: parsedRenaissanceBaseOverrides, renaissanceAddOns: parsedRenaissanceAddOns });
     setPricingSaving(false);
     setPricingMessage("Admin pricing saved to Supabase.");
+  }
+
+  function addCustomServiceToDraft() {
+    const normalized = normalizeCustomService(newServiceDraft, pricingDraft.customServices?.length || 0);
+    if (!normalized.name || !(normalized.basePrice > 0)) {
+      setPricingMessage("New service needs a name and base price before you add it.");
+      return;
+    }
+    setPricingDraft((current) => ({ ...current, customServices: [...(current.customServices || []), normalized] }));
+    setNewServiceDraft({ category: normalized.category, name: "", unit: normalized.unit || "Each", basePrice: "" });
+    setPricingMessage("Custom service added to the pricing draft. Save pricing to make it live.");
+  }
+
+  function updateCustomServiceDraft(serviceId, field, value) {
+    setPricingDraft((current) => ({
+      ...current,
+      customServices: (current.customServices || []).map((service, index) => {
+        if (service.id !== serviceId) return service;
+        return normalizeCustomService({ ...service, [field]: value }, index);
+      })
+    }));
+  }
+
+  function removeCustomServiceDraft(serviceId) {
+    setPricingDraft((current) => ({
+      ...current,
+      customServices: (current.customServices || []).filter((service) => service.id !== serviceId)
+    }));
+  }
+
+  function applyRenaissanceBaseDraft() {
+    const styleKey = renaissanceBaseDraft.styleKey;
+    const width = safeNumber(renaissanceBaseDraft.width);
+    const projection = safeNumber(renaissanceBaseDraft.projection);
+    const price = safeNumber(renaissanceBaseDraft.price);
+    if (!styleKey || !width || !projection || !(price > 0)) {
+      setPricingMessage("Renaissance base override needs a style, width, projection, and price.");
+      return;
+    }
+    const overrideKey = `${styleKey}||${projection}||${width}`;
+    setPricingDraft((current) => ({
+      ...current,
+      renaissanceBaseOverrides: {
+        ...(current.renaissanceBaseOverrides || {}),
+        [overrideKey]: price
+      }
+    }));
+    setPricingMessage("Renaissance base override added to the draft. Save pricing to make it live.");
+  }
+
+  function removeRenaissanceBaseOverride(overrideKey) {
+    setPricingDraft((current) => {
+      const next = { ...(current.renaissanceBaseOverrides || {}) };
+      delete next[overrideKey];
+      return { ...current, renaissanceBaseOverrides: next };
+    });
+  }
+
+  function updateRenaissanceAddon(path, value) {
+    setPricingDraft((current) => {
+      const nextAddOns = cleanJson(current.renaissanceAddOns || renaissanceAddOns);
+      if (path.length === 1) nextAddOns[path[0]] = value;
+      if (path.length === 2) nextAddOns[path[0]] = { ...(nextAddOns[path[0]] || {}), [path[1]]: value };
+      return { ...current, renaissanceAddOns: nextAddOns };
+    });
   }
 
   useEffect(() => {
@@ -1551,9 +1738,55 @@ function App() {
                 Search line items
                 <input type="text" placeholder="Search permit, concrete, screen..." value={pricingEditorSearch} onChange={(e) => setPricingEditorSearch(e.target.value)} />
               </label>
+              <div className="admin-subcard">
+                <div className="section-head compact-head">
+                  <div>
+                    <h3>Add standard pricing service</h3>
+                    <p className="small-note">Add new services right into the standard pricing sheet without touching code again.</p>
+                  </div>
+                </div>
+                <div className="admin-pricing-grid">
+                  <label>
+                    Category
+                    <input type="text" value={newServiceDraft.category} onChange={(e) => setNewServiceDraft((current) => ({ ...current, category: e.target.value }))} />
+                  </label>
+                  <label>
+                    Service name
+                    <input type="text" value={newServiceDraft.name} onChange={(e) => setNewServiceDraft((current) => ({ ...current, name: e.target.value }))} />
+                  </label>
+                  <label>
+                    Unit
+                    <input type="text" value={newServiceDraft.unit} onChange={(e) => setNewServiceDraft((current) => ({ ...current, unit: e.target.value }))} />
+                  </label>
+                  <label>
+                    Base price
+                    <input type="number" inputMode="decimal" step="0.01" value={newServiceDraft.basePrice} onChange={(e) => setNewServiceDraft((current) => ({ ...current, basePrice: e.target.value }))} />
+                  </label>
+                </div>
+                <div className="toolbar-buttons inline-actions">
+                  <button className="ghost-btn" onClick={addCustomServiceToDraft}>Add service</button>
+                </div>
+                {!!pricingDraft.customServices?.length && (
+                  <div className="admin-pricing-list compact-list">
+                    {(pricingDraft.customServices || []).map((service) => (
+                      <div className="admin-line-price-row custom-service-row" key={`custom-service-${service.id}`}>
+                        <span>
+                          <strong>{service.name}</strong>
+                          <small>{service.category} • {service.unit}</small>
+                        </span>
+                        <input type="text" value={service.category} onChange={(e) => updateCustomServiceDraft(service.id, "category", e.target.value)} />
+                        <input type="text" value={service.name} onChange={(e) => updateCustomServiceDraft(service.id, "name", e.target.value)} />
+                        <input type="text" value={service.unit} onChange={(e) => updateCustomServiceDraft(service.id, "unit", e.target.value)} />
+                        <input type="number" inputMode="decimal" step="0.01" value={service.basePrice} onChange={(e) => updateCustomServiceDraft(service.id, "basePrice", e.target.value)} />
+                        <button className="ghost-btn danger-btn" onClick={() => removeCustomServiceDraft(service.id)}>Remove</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
               <div className="admin-pricing-list">
                 {categories.map((cat) => {
-                  const visibleItems = cat.items.filter((item) => !pricingEditorSearch.trim() || item.name.toLowerCase().includes(pricingEditorSearch.trim().toLowerCase()) || cat.name.toLowerCase().includes(pricingEditorSearch.trim().toLowerCase()));
+                  const visibleItems = cat.items.filter((item) => !item.isCustom && (!pricingEditorSearch.trim() || item.name.toLowerCase().includes(pricingEditorSearch.trim().toLowerCase()) || cat.name.toLowerCase().includes(pricingEditorSearch.trim().toLowerCase())));
                   if (!visibleItems.length) return null;
                   return (
                     <div key={`admin-${cat.name}`} className="admin-pricing-group">
@@ -1572,6 +1805,101 @@ function App() {
                     </div>
                   );
                 })}
+              </div>
+              <div className="admin-subcard">
+                <div className="section-head compact-head">
+                  <div>
+                    <h3>Renaissance standard pricing</h3>
+                    <p className="small-note">Change base table cells and common add-ons for Renaissance without editing the code.</p>
+                  </div>
+                </div>
+                <div className="admin-pricing-grid">
+                  <label>
+                    Style
+                    <select value={renaissanceBaseDraft.styleKey} onChange={(e) => setRenaissanceBaseDraft((current) => ({ ...current, styleKey: e.target.value }))}>
+                      {Object.keys(appData.renaissance.styles).map((styleKey) => <option key={`style-${styleKey}`} value={styleKey}>{styleKey}</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    Width
+                    <input type="number" inputMode="decimal" step="1" value={renaissanceBaseDraft.width} onChange={(e) => setRenaissanceBaseDraft((current) => ({ ...current, width: e.target.value }))} />
+                  </label>
+                  <label>
+                    Projection
+                    <input type="number" inputMode="decimal" step="1" value={renaissanceBaseDraft.projection} onChange={(e) => setRenaissanceBaseDraft((current) => ({ ...current, projection: e.target.value }))} />
+                  </label>
+                  <label>
+                    Base price override
+                    <input type="number" inputMode="decimal" step="0.01" value={renaissanceBaseDraft.price} onChange={(e) => setRenaissanceBaseDraft((current) => ({ ...current, price: e.target.value }))} />
+                  </label>
+                </div>
+                <div className="toolbar-buttons inline-actions">
+                  <button className="ghost-btn" onClick={applyRenaissanceBaseDraft}>Add / update base price</button>
+                </div>
+                {!!Object.keys(pricingDraft.renaissanceBaseOverrides || {}).length && (
+                  <div className="admin-pricing-list compact-list">
+                    {Object.entries(pricingDraft.renaissanceBaseOverrides || {}).sort(([a], [b]) => a.localeCompare(b)).map(([overrideKey, value]) => (
+                      <div className="admin-line-price-row custom-service-row" key={`ren-base-${overrideKey}`}>
+                        <span>
+                          <strong>{formatRenaissanceOverrideLabel(overrideKey)}</strong>
+                          <small>Base table override</small>
+                        </span>
+                        <input type="number" inputMode="decimal" step="0.01" value={value} onChange={(e) => setPricingDraft((current) => ({ ...current, renaissanceBaseOverrides: { ...(current.renaissanceBaseOverrides || {}), [overrideKey]: e.target.value } }))} />
+                        <button className="ghost-btn danger-btn" onClick={() => removeRenaissanceBaseOverride(overrideKey)}>Remove</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="admin-tier-grid renaissance-addon-grid">
+                  <label>
+                    .032 skin / sqft
+                    <input type="number" inputMode="decimal" step="0.01" value={pricingDraft.renaissanceAddOns?.alum032PerSqft || ""} onChange={(e) => updateRenaissanceAddon(["alum032PerSqft"], e.target.value)} />
+                  </label>
+                  <label>
+                    Heavy foam / sqft
+                    <input type="number" inputMode="decimal" step="0.01" value={pricingDraft.renaissanceAddOns?.heavyFoamPerSqft || ""} onChange={(e) => updateRenaissanceAddon(["heavyFoamPerSqft"], e.target.value)} />
+                  </label>
+                  <label>
+                    Roof color / sqft
+                    <input type="number" inputMode="decimal" step="0.01" value={pricingDraft.renaissanceAddOns?.customRoofColorPerSqft || ""} onChange={(e) => updateRenaissanceAddon(["customRoofColorPerSqft"], e.target.value)} />
+                  </label>
+                  <label>
+                    Deduct post
+                    <input type="number" inputMode="decimal" step="0.01" value={pricingDraft.renaissanceAddOns?.deductPost || ""} onChange={(e) => updateRenaissanceAddon(["deductPost"], e.target.value)} />
+                  </label>
+                  <label>
+                    Fan beam 10'
+                    <input type="number" inputMode="decimal" step="0.01" value={pricingDraft.renaissanceAddOns?.fanBeamByProjection?.["10"] || ""} onChange={(e) => updateRenaissanceAddon(["fanBeamByProjection", "10"], e.target.value)} />
+                  </label>
+                  <label>
+                    Fan beam 12'
+                    <input type="number" inputMode="decimal" step="0.01" value={pricingDraft.renaissanceAddOns?.fanBeamByProjection?.["12"] || ""} onChange={(e) => updateRenaissanceAddon(["fanBeamByProjection", "12"], e.target.value)} />
+                  </label>
+                  <label>
+                    HD post
+                    <input type="number" inputMode="decimal" step="0.01" value={pricingDraft.renaissanceAddOns?.postUpgradeEach?.hd || ""} onChange={(e) => updateRenaissanceAddon(["postUpgradeEach", "hd"], e.target.value)} />
+                  </label>
+                  <label>
+                    Wide post
+                    <input type="number" inputMode="decimal" step="0.01" value={pricingDraft.renaissanceAddOns?.postUpgradeEach?.wide || ""} onChange={(e) => updateRenaissanceAddon(["postUpgradeEach", "wide"], e.target.value)} />
+                  </label>
+                  <label>
+                    Wide + insert post
+                    <input type="number" inputMode="decimal" step="0.01" value={pricingDraft.renaissanceAddOns?.postUpgradeEach?.wideInsert || ""} onChange={(e) => updateRenaissanceAddon(["postUpgradeEach", "wideInsert"], e.target.value)} />
+                  </label>
+                  <label>
+                    HD beam / ft
+                    <input type="number" inputMode="decimal" step="0.01" value={pricingDraft.renaissanceAddOns?.beamUpgradePerFoot?.hd || ""} onChange={(e) => updateRenaissanceAddon(["beamUpgradePerFoot", "hd"], e.target.value)} />
+                  </label>
+                  <label>
+                    Wide beam / ft
+                    <input type="number" inputMode="decimal" step="0.01" value={pricingDraft.renaissanceAddOns?.beamUpgradePerFoot?.wide || ""} onChange={(e) => updateRenaissanceAddon(["beamUpgradePerFoot", "wide"], e.target.value)} />
+                  </label>
+                  <label>
+                    Wide + insert beam / ft
+                    <input type="number" inputMode="decimal" step="0.01" value={pricingDraft.renaissanceAddOns?.beamUpgradePerFoot?.wideInsert || ""} onChange={(e) => updateRenaissanceAddon(["beamUpgradePerFoot", "wideInsert"], e.target.value)} />
+                  </label>
+                </div>
               </div>
             </>
           )}

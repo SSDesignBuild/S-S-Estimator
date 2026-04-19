@@ -1138,6 +1138,37 @@ textarea:focus {
   max-width: 120px;
 }
 
+.admin-subcard {
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 1rem;
+  background: var(--panel-soft);
+  margin-bottom: 1rem;
+}
+
+.compact-list {
+  max-height: 18rem;
+  margin-top: 0.75rem;
+}
+
+.custom-service-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.6fr) repeat(4, minmax(90px, 1fr)) auto;
+  align-items: center;
+}
+
+.danger-btn {
+  color: #a62828;
+}
+
+.renaissance-addon-grid {
+  margin-top: 1rem;
+}
+
+.admin-subcard select {
+  width: 100%;
+}
+
 @media (max-width: 720px) {
   .admin-line-price-row {
     flex-direction: column;
@@ -1146,5 +1177,9 @@ textarea:focus {
 
   .admin-line-price-row input {
     max-width: none;
+  }
+
+  .custom-service-row {
+    grid-template-columns: 1fr;
   }
 }
