@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { supabase } from "./lib/supabase";
 import { appData } from "./data";
 
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
@@ -393,8 +394,67 @@ function getFanBeamUnit(addOns, projection) {
   return Math.round(p18 + step * (projection - 18));
 }
 
+function AuthScreen({ email, password, setEmail, setPassword, onSubmit, loading, error }) {
+  return (
+    <div className="auth-shell">
+      <div className="auth-card card">
+        <div className="brand-lockup auth-lockup">
+          <img className="brand-logo" src="/logo-mark.png" alt="S&S Design Build" />
+          <div>
+            <h1>S&amp;S Design Build</h1>
+            <p>Sign in with your rep email and password to open the estimator.</p>
+          </div>
+        </div>
+
+        <form className="auth-form" onSubmit={onSubmit}>
+          <label>
+            Email
+            <input
+              type="email"
+              autoComplete="email"
+              placeholder="you@company.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
+          </label>
+
+          <label>
+            Password
+            <input
+              type="password"
+              autoComplete="current-password"
+              placeholder="Enter your password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+          </label>
+
+          {error ? <div className="auth-error">{error}</div> : null}
+
+          <button className="auth-submit" type="submit" disabled={loading}>
+            {loading ? "Signing in..." : "Sign in"}
+          </button>
+        </form>
+
+        <p className="auth-help">
+          Admin can create rep accounts in Supabase. Managers can view team quotes once role rules are added.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [selectedTier, setSelectedTier] = useState("tier5");
+  const [session, setSession] = useState(null);
+  const [profile, setProfile] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState("");
   const [lineQtys, setLineQtys] = useState(defaultLineState);
   const [settings, setSettings] = useState(defaultSettings);
   const [selectedPlanId, setSelectedPlanId] = useState(financingPlans[0].id);
@@ -407,6 +467,55 @@ function App() {
   const [activeView, setActiveView] = useState("standard");
   const [searchTerm, setSearchTerm] = useState("");
   const touchStartX = useRef(null);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    supabase.auth.getSession().then(({ data, error }) => {
+      if (!isMounted) return;
+      if (error) console.error("Supabase session error", error);
+      setSession(data?.session ?? null);
+      setAuthReady(true);
+    });
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession ?? null);
+      setAuthReady(true);
+    });
+
+    return () => {
+      isMounted = false;
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!session?.user?.id) {
+      setProfile(null);
+      return;
+    }
+
+    let isMounted = true;
+
+    supabase
+      .from("profiles")
+      .select("id, full_name, email, role")
+      .eq("id", session.user.id)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (!isMounted) return;
+        if (error) {
+          console.error("Profile fetch failed", error);
+          setProfile(null);
+          return;
+        }
+        setProfile(data ?? null);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [session?.user?.id]);
 
   useEffect(() => {
     const saved = localStorage.getItem(storageKey);
@@ -696,6 +805,30 @@ function App() {
     setSettings((current) => ({ ...current, ...defaultSettings, darkMode: current.darkMode, showCommission: current.showCommission, showNoFinancingTotal: current.showNoFinancingTotal }));
   }
 
+  async function handleLogin(event) {
+    event.preventDefault();
+    setAuthError("");
+    setAuthLoading(true);
+
+    const { error } = await supabase.auth.signInWithPassword({
+      email: authEmail.trim(),
+      password: authPassword
+    });
+
+    if (error) {
+      setAuthError(error.message || "Sign-in failed. Check your email and password.");
+    } else {
+      setAuthPassword("");
+    }
+
+    setAuthLoading(false);
+  }
+
+  async function handleSignOut() {
+    const { error } = await supabase.auth.signOut();
+    if (error) console.error("Sign-out failed", error);
+  }
+
   async function copySummary() {
     const useFinancedLineSpread = !settings.showNoFinancingTotal;
     const copySpreadRatio = useFinancedLineSpread && subtotal > 0
@@ -731,6 +864,31 @@ function App() {
     }
   }
 
+  if (!authReady) {
+    return (
+      <div className="auth-shell">
+        <div className="auth-card card">
+          <h1>Loading estimator…</h1>
+          <p className="small-note">Checking your secure session.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <AuthScreen
+        email={authEmail}
+        password={authPassword}
+        setEmail={setAuthEmail}
+        setPassword={setAuthPassword}
+        onSubmit={handleLogin}
+        loading={authLoading}
+        error={authError}
+      />
+    );
+  }
+
   return (
     <div className="page-shell">
       <header className="topbar card">
@@ -741,8 +899,13 @@ function App() {
           </div>
         </div>
         <div className="topbar-actions">
+          <div className="user-chip">
+            <strong>{profile?.full_name || session.user.email}</strong>
+            <span>{(profile?.role || "sales_rep").replace("_", " ")}</span>
+          </div>
           <button className="ghost-btn" onClick={clearAll}>Clear inputs</button>
           <button className="ghost-btn" onClick={() => setSettingsOpen(true)}>Settings</button>
+          <button className="ghost-btn" onClick={handleSignOut}>Sign out</button>
         </div>
       </header>
 
