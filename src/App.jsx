@@ -807,9 +807,16 @@ function App() {
       linePrices: Object.fromEntries(baseUiCategories.flatMap((cat) => cat.items.map((item) => [item.id, String(pricingOverrides.linePrices?.[item.id] ?? item.basePrice)]))),
       customServices: (pricingOverrides.customServices || []).map((service, index) => normalizeCustomService(service, index)),
       renaissanceTablePercent: String(pricingOverrides.renaissanceTablePercent ?? 0),
-      renaissanceAddOns: cleanJson(renaissanceAddOns)
+      renaissanceAddOns: cleanJson(renaissanceAddOns),
+      ghlSettings: {
+        enabled: Boolean(pricingOverrides.ghlSettings?.enabled),
+        locationId: String(pricingOverrides.ghlSettings?.locationId || ""),
+        defaultPipelineId: String(pricingOverrides.ghlSettings?.defaultPipelineId || ""),
+        defaultOpportunityStageId: String(pricingOverrides.ghlSettings?.defaultOpportunityStageId || ""),
+        companyName: String(pricingOverrides.ghlSettings?.companyName || "S&S Design Build")
+      }
     });
-  }, [effectiveAppDefaults, pricingTiers, pricingOverrides.linePrices, pricingOverrides.customServices, pricingOverrides.renaissanceTablePercent, renaissanceAddOns]);
+  }, [effectiveAppDefaults, pricingTiers, pricingOverrides.linePrices, pricingOverrides.customServices, pricingOverrides.renaissanceTablePercent, renaissanceAddOns, pricingOverrides.ghlSettings]);
 
   useEffect(() => {
     setRenaissance((current) => ({ ...current, beamLength: Math.max(safeNumber(current.width) - safeNumber(current.sideOverhang) * 2, 0) }));
