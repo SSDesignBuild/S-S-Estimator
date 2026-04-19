@@ -63,7 +63,11 @@ function selectInputText(event) {
 const validRoles = ["admin", "manager", "sales_rep"];
 
 function formatRole(role) {
-  return (role || "sales_rep").replaceAll("_", " ");
+  return (role || "No role").replaceAll("_", " ");
+}
+
+function resolveRole(profile, session) {
+  return profile?.role || session?.user?.app_metadata?.role || session?.user?.user_metadata?.role || null;
 }
 
 function getPermissions(role) {
@@ -105,7 +109,7 @@ function AccessPanel({ profile, permissions }) {
           <h2>Protected access</h2>
           <p className="small-note">The estimator now understands rep, manager, and admin access.</p>
         </div>
-        <span className={`role-pill role-${profile?.role || "sales_rep"}`}>{formatRole(profile?.role)}</span>
+        <span className={`role-pill role-${profile?.role || "none"}`}>{formatRole(profile?.role)}</span>
       </div>
       <div className="access-grid">
         <div className="access-item">
@@ -587,8 +591,35 @@ function App() {
           setProfileLoading(false);
           return;
         }
-        setProfile(data ?? null);
-        setProfileLoading(false);
+        if (data) {
+          setProfile(data);
+          setProfileLoading(false);
+          return;
+        }
+
+        const fallbackProfile = {
+          id: session.user.id,
+          full_name: session.user.user_metadata?.full_name || "",
+          email: session.user.email || "",
+          role: session.user.app_metadata?.role || session.user.user_metadata?.role || null
+        };
+
+        supabase
+          .from("profiles")
+          .upsert(fallbackProfile, { onConflict: "id" })
+          .select("id, full_name, email, role")
+          .single()
+          .then(({ data: upserted, error: upsertError }) => {
+            if (!isMounted) return;
+            if (upsertError) {
+              console.error("Profile bootstrap failed", upsertError);
+              setProfile(fallbackProfile);
+              setProfileLoading(false);
+              return;
+            }
+            setProfile(upserted ?? fallbackProfile);
+            setProfileLoading(false);
+          });
       });
 
     return () => {
@@ -662,9 +693,9 @@ function App() {
   }, [renaissance.section, renaissance.width, renaissance.projection, renaissance.frontOverhang, renaissance.sideOverhang, renaissance.supportBeams, renaissance.postCountOverride, renaissance.beamUpgrade, renaissance.windSpeed, renaissance.exposure]);
 
   const activeTier = appData.pricingTiers[selectedTier] || appData.pricingTiers.tier5;
-  const currentRole = profile?.role || "sales_rep";
+  const currentRole = resolveRole(profile, session);
   const permissions = getPermissions(currentRole);
-  const hasValidRole = !profile || validRoles.includes(currentRole);
+  const hasValidRole = !currentRole || validRoles.includes(currentRole);
   const selectedPlan = financingPlans.find((plan) => plan.id === selectedPlanId) || financingPlans[0];
   const currentRenaissanceOptions = renaissanceSectionOptions[renaissance.section] || renaissanceSectionOptions.Moderno;
   const renaissanceStyleKey = renaissance.section;
@@ -998,7 +1029,7 @@ function App() {
         <div className="topbar-actions">
           <div className="user-chip">
             <strong>{profile?.full_name || session.user.email}</strong>
-            <span>{formatRole(profile?.role || "sales_rep")}</span>
+            <span>{formatRole(currentRole)}</span>
           </div>
           <button className="ghost-btn" onClick={clearAll}>Clear inputs</button>
           <button className="ghost-btn" onClick={() => setSettingsOpen(true)}>Settings</button>
@@ -1048,7 +1079,7 @@ function App() {
         )}
       </section>
 
-      <AccessPanel profile={profile || { role: "sales_rep" }} permissions={permissions} />
+      <AccessPanel profile={profile || { role: currentRole }} permissions={permissions} />
 
       {settings.showCommission && (
         <section className="commission-box card">
@@ -1402,7 +1433,7 @@ function App() {
               <h3>Access level</h3>
               <div className="access-summary-list">
                 <div><strong>Signed in as:</strong> {profile?.full_name || session.user.email}</div>
-                <div><strong>Role:</strong> {formatRole(profile?.role || "sales_rep")}</div>
+                <div><strong>Role:</strong> {formatRole(currentRole)}</div>
                 <div><strong>Estimator:</strong> {permissions.canUseEstimator ? "Enabled" : "Blocked"}</div>
                 <div><strong>Team quotes:</strong> {permissions.canViewTeamQuotes ? "Manager / admin access" : "Own quotes only"}</div>
                 <div><strong>Pricing editor:</strong> {permissions.canManagePricing ? "Admin access" : "Locked"}</div>
