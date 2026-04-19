@@ -210,6 +210,12 @@ const defaultSettings = {
   showNoFinancingTotal: true
 };
 
+const defaultCustomer = {
+  name: "",
+  email: "",
+  phone: ""
+};
+
 function roofSqft(mount, width, projection) {
   if (!width || !projection) return 0;
   return mount === "Attached" ? (width + 2) * (projection + 1) : (width + 2) * (projection + 2);
@@ -536,6 +542,12 @@ function App() {
   const [authError, setAuthError] = useState("");
   const [lineQtys, setLineQtys] = useState(defaultLineState);
   const [settings, setSettings] = useState(defaultSettings);
+  const [customer, setCustomer] = useState(defaultCustomer);
+  const [savedQuotes, setSavedQuotes] = useState([]);
+  const [quotesLoading, setQuotesLoading] = useState(false);
+  const [saveLoading, setSaveLoading] = useState(false);
+  const [saveMessage, setSaveMessage] = useState("");
+  const [selectedQuoteId, setSelectedQuoteId] = useState(null);
   const [selectedPlanId, setSelectedPlanId] = useState(financingPlans[0].id);
   const [renaissance, setRenaissance] = useState(defaultRenaissance);
   const [expanded, setExpanded] = useState(defaultExpanded);
@@ -637,6 +649,7 @@ function App() {
       if (parsed.selectedTier && appData.pricingTiers[parsed.selectedTier]) setSelectedTier(parsed.selectedTier);
       if (parsed.lineQtys && typeof parsed.lineQtys === "object") setLineQtys({ ...defaultLineState, ...parsed.lineQtys });
       if (parsed.settings && typeof parsed.settings === "object") setSettings({ ...defaultSettings, ...parsed.settings });
+      if (parsed.customer && typeof parsed.customer === "object") setCustomer({ ...defaultCustomer, ...parsed.customer });
       if (parsed.selectedPlanId && financingPlans.some((plan) => plan.id === parsed.selectedPlanId)) setSelectedPlanId(parsed.selectedPlanId);
       if (parsed.renaissance && typeof parsed.renaissance === "object") setRenaissance({ ...defaultRenaissance, ...parsed.renaissance, tier: undefined });
       if (parsed.expanded && typeof parsed.expanded === "object") setExpanded({ ...defaultExpanded, ...parsed.expanded });
@@ -645,6 +658,7 @@ function App() {
       if (typeof parsed.financingOpen === "boolean") setFinancingOpen(parsed.financingOpen);
       if (["standard", "renaissance"].includes(parsed.activeView)) setActiveView(parsed.activeView);
       if (typeof parsed.searchTerm === "string") setSearchTerm(parsed.searchTerm);
+      if (typeof parsed.selectedQuoteId === "string" || parsed.selectedQuoteId === null) setSelectedQuoteId(parsed.selectedQuoteId);
     } catch (err) {
       console.error("Failed to load saved estimator state:", err);
       localStorage.removeItem(storageKey);
@@ -654,9 +668,9 @@ function App() {
   useEffect(() => {
     localStorage.setItem(
       storageKey,
-      JSON.stringify({ selectedTier, lineQtys, settings, selectedPlanId, renaissance, expanded, toolbarOpen, renaissanceOpen, financingOpen, activeView, searchTerm })
+      JSON.stringify({ selectedTier, lineQtys, settings, customer, selectedPlanId, renaissance, expanded, toolbarOpen, renaissanceOpen, financingOpen, activeView, searchTerm, selectedQuoteId })
     );
-  }, [selectedTier, lineQtys, settings, selectedPlanId, renaissance, expanded, toolbarOpen, renaissanceOpen, financingOpen, activeView, searchTerm]);
+  }, [selectedTier, lineQtys, settings, customer, selectedPlanId, renaissance, expanded, toolbarOpen, renaissanceOpen, financingOpen, activeView, searchTerm, selectedQuoteId]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = settings.darkMode ? "dark" : "light";
@@ -915,7 +929,183 @@ function App() {
   function clearAll() {
     setLineQtys(defaultLineState);
     setRenaissance(defaultRenaissance);
+    setCustomer(defaultCustomer);
+    setSelectedQuoteId(null);
+    setSaveMessage("");
     setSettings((current) => ({ ...current, ...defaultSettings, darkMode: current.darkMode, showCommission: current.showCommission, showNoFinancingTotal: current.showNoFinancingTotal }));
+  }
+
+  useEffect(() => {
+    if (!session?.user?.id || !currentRole || !permissions.canUseEstimator) {
+      setSavedQuotes([]);
+      setQuotesLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    async function loadQuotes() {
+      setQuotesLoading(true);
+      const { data, error } = await supabase
+        .from("quotes")
+        .select("id, customer_name, customer_email, customer_phone, city, county, tier, subtotal, tax, permit_fee, cash_price, financing_price, financed_amount, monthly_payment, financing_plan_name, status, created_at, updated_at, created_by")
+        .order("updated_at", { ascending: false })
+        .limit(25);
+      if (cancelled) return;
+      if (error) {
+        console.error("Load quotes failed", error);
+        setSavedQuotes([]);
+      } else {
+        setSavedQuotes(data || []);
+      }
+      setQuotesLoading(false);
+    }
+    loadQuotes();
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user?.id, currentRole, permissions.canUseEstimator]);
+
+  function hydrateQuoteSnapshot(snapshot) {
+    setSelectedTier(snapshot?.selectedTier && appData.pricingTiers[snapshot.selectedTier] ? snapshot.selectedTier : "tier5");
+    setLineQtys({ ...defaultLineState, ...(snapshot?.lineQtys || {}) });
+    setSettings((current) => ({ ...current, ...defaultSettings, ...(snapshot?.settings || {}), darkMode: current.darkMode, showCommission: current.showCommission, showNoFinancingTotal: current.showNoFinancingTotal }));
+    setCustomer({ ...defaultCustomer, ...(snapshot?.customer || {}) });
+    setSelectedPlanId(financingPlans.some((plan) => plan.id === snapshot?.selectedPlanId) ? snapshot.selectedPlanId : financingPlans[0].id);
+    setRenaissance({ ...defaultRenaissance, ...(snapshot?.renaissance || {}), tier: undefined });
+    setExpanded({ ...defaultExpanded, ...(snapshot?.expanded || {}) });
+    setToolbarOpen(typeof snapshot?.toolbarOpen === "boolean" ? snapshot.toolbarOpen : true);
+    setRenaissanceOpen(typeof snapshot?.renaissanceOpen === "boolean" ? snapshot.renaissanceOpen : true);
+    setFinancingOpen(false);
+    setActiveView(["standard", "renaissance"].includes(snapshot?.activeView) ? snapshot.activeView : "standard");
+    setSearchTerm(typeof snapshot?.searchTerm === "string" ? snapshot.searchTerm : "");
+  }
+
+  async function loadQuote(quoteId) {
+    setSaveMessage("");
+    const { data, error } = await supabase
+      .from("quotes")
+      .select("id, quote_data")
+      .eq("id", quoteId)
+      .single();
+
+    if (error) {
+      console.error("Load quote failed", error);
+      setSaveMessage("Could not load that quote.");
+      return;
+    }
+
+    hydrateQuoteSnapshot(data?.quote_data || {});
+    setSelectedQuoteId(data?.id || quoteId);
+    setSaveMessage("Quote loaded.");
+  }
+
+  async function saveQuote() {
+    if (!session?.user?.id) return;
+    setSaveLoading(true);
+    setSaveMessage("");
+
+    const quotePayload = {
+      created_by: session.user.id,
+      customer_name: customer.name || null,
+      customer_email: customer.email || null,
+      customer_phone: customer.phone || null,
+      city: settings.city || null,
+      county: settings.county || null,
+      tier: selectedTier,
+      quote_data: {
+        selectedTier,
+        lineQtys,
+        settings,
+        customer,
+        selectedPlanId,
+        renaissance,
+        expanded,
+        toolbarOpen,
+        renaissanceOpen,
+        activeView,
+        searchTerm
+      },
+      subtotal: +subtotal.toFixed(2),
+      tax: +salesTax.toFixed(2),
+      permit_fee: +permittingFee.toFixed(2),
+      cash_price: +totalNoFinancing.toFixed(2),
+      financing_price: +financedSaleAmount.toFixed(2),
+      financed_amount: +financedBase.toFixed(2),
+      monthly_payment: +monthlyPayment.toFixed(2),
+      financing_plan_name: selectedPlan.label,
+      status: "draft"
+    };
+
+    const lineRows = activeItems.map((item) => ({
+      category: item.category,
+      service_name: item.name,
+      unit: item.unit,
+      quantity: +item.qty,
+      unit_price: +item.displayPrice.toFixed(2),
+      line_total: +item.extended.toFixed(2),
+      source_type: "standard"
+    }));
+
+    if (renaissanceCalc.total > 0) {
+      lineRows.push({
+        category: "Renaissance",
+        service_name: `${renaissanceCalc.key} ${renaissanceCalc.width}' x ${renaissanceCalc.projection}'`,
+        unit: "Each",
+        quantity: 1,
+        unit_price: +renaissanceCalc.total.toFixed(2),
+        line_total: +renaissanceCalc.total.toFixed(2),
+        source_type: "renaissance"
+      });
+      renaissanceCalc.adders.forEach((adder) => {
+        lineRows.push({
+          category: "Renaissance",
+          service_name: adder.label,
+          unit: "Each",
+          quantity: 1,
+          unit_price: +adder.amount.toFixed(2),
+          line_total: +adder.amount.toFixed(2),
+          source_type: "renaissance"
+        });
+      });
+    }
+
+    let quoteId = selectedQuoteId;
+    if (quoteId) {
+      const { error: updateError } = await supabase.from("quotes").update(quotePayload).eq("id", quoteId);
+      if (updateError) {
+        console.error("Update quote failed", updateError);
+        setSaveLoading(false);
+        setSaveMessage("Could not update quote.");
+        return;
+      }
+      const { error: deleteError } = await supabase.from("quote_lines").delete().eq("quote_id", quoteId);
+      if (deleteError) console.error("Delete old quote lines failed", deleteError);
+    } else {
+      const { data: inserted, error: insertError } = await supabase.from("quotes").insert(quotePayload).select("id").single();
+      if (insertError) {
+        console.error("Save quote failed", insertError);
+        setSaveLoading(false);
+        setSaveMessage("Could not save quote.");
+        return;
+      }
+      quoteId = inserted.id;
+      setSelectedQuoteId(quoteId);
+    }
+
+    if (lineRows.length) {
+      const rows = lineRows.map((row) => ({ ...row, quote_id: quoteId }));
+      const { error: linesError } = await supabase.from("quote_lines").insert(rows);
+      if (linesError) console.error("Save quote lines failed", linesError);
+    }
+
+    const { data: refreshed } = await supabase
+      .from("quotes")
+      .select("id, customer_name, customer_email, customer_phone, city, county, tier, subtotal, tax, permit_fee, cash_price, financing_price, financed_amount, monthly_payment, financing_plan_name, status, created_at, updated_at, created_by")
+      .order("updated_at", { ascending: false })
+      .limit(25);
+    setSavedQuotes(refreshed || []);
+    setSaveLoading(false);
+    setSaveMessage(selectedQuoteId ? "Quote updated." : "Quote saved.");
   }
 
   async function handleLogin(event) {
@@ -1344,8 +1534,26 @@ function App() {
                 <h2>Quote summary</h2>
                 <p className="small-note">{lineCount} active line item{lineCount === 1 ? "" : "s"}</p>
               </div>
-              <button className="ghost-btn" onClick={copySummary}>Copy</button>
+              <div className="toolbar-buttons inline-actions">
+                <button className="ghost-btn" onClick={saveQuote} disabled={saveLoading}>{saveLoading ? "Saving…" : selectedQuoteId ? "Update" : "Save Quote"}</button>
+                <button className="ghost-btn" onClick={copySummary}>Copy</button>
+              </div>
             </div>
+            <div className="customer-grid compact-customer-grid">
+              <label>
+                Customer name
+                <input type="text" value={customer.name} onChange={(e) => setCustomer((current) => ({ ...current, name: e.target.value }))} placeholder="Customer name" />
+              </label>
+              <label>
+                Customer email
+                <input type="email" value={customer.email} onChange={(e) => setCustomer((current) => ({ ...current, email: e.target.value }))} placeholder="customer@email.com" />
+              </label>
+              <label>
+                Customer phone
+                <input type="text" value={customer.phone} onChange={(e) => setCustomer((current) => ({ ...current, phone: e.target.value }))} placeholder="(615) 555-1234" />
+              </label>
+            </div>
+            {saveMessage ? <p className="small-note success-note">{saveMessage}</p> : null}
             <div className="summary-row"><span>Subtotal</span><strong>{currency.format(subtotal)}</strong></div>
             <div className="summary-row"><span>Sales tax on 40%</span><strong>{currency.format(salesTax)}</strong></div>
             <div className="summary-row"><span>Permitting + location fees</span><strong>{currency.format(permittingFee)}</strong></div>
@@ -1387,6 +1595,31 @@ function App() {
               <div className="summary-row"><span>Amount being financed after deposit</span><strong>{currency.format(financedBase)}</strong></div>
               <div className="summary-row accent"><span>{selectedPlan.label}</span><strong>{currency.format(monthlyPayment)}/mo</strong></div>
               {selectedPlan.details ? <p className="small-note">{selectedPlan.details}</p> : null}
+            </div>
+          </section>
+
+          <section className="card sticky-card saved-quotes-card">
+            <div className="section-head compact-head">
+              <div>
+                <h2>Saved quotes</h2>
+                <p className="small-note">Admins and managers can see team quotes. Reps see their own.</p>
+              </div>
+            </div>
+            {quotesLoading ? <p className="small-note">Loading saved quotes…</p> : null}
+            {!quotesLoading && savedQuotes.length === 0 ? <p className="small-note">No saved quotes yet.</p> : null}
+            <div className="saved-quotes-list">
+              {savedQuotes.map((quote) => (
+                <button key={quote.id} className={selectedQuoteId === quote.id ? "saved-quote-row active" : "saved-quote-row"} onClick={() => loadQuote(quote.id)}>
+                  <div>
+                    <strong>{quote.customer_name || "Untitled quote"}</strong>
+                    <span>{quote.customer_email || quote.customer_phone || "No customer contact yet"}</span>
+                  </div>
+                  <div>
+                    <strong>{currency.format(quote.financing_price || quote.cash_price || 0)}</strong>
+                    <span>{quote.tier} · {new Date(quote.updated_at).toLocaleDateString()}</span>
+                  </div>
+                </button>
+              ))}
             </div>
           </section>
 
