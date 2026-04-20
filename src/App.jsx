@@ -785,6 +785,10 @@ function App() {
     };
   }, [session?.user?.id]);
 
+  const currentRole = resolveRole(profile, session);
+  const permissions = getPermissions(currentRole);
+  const hasValidRole = !currentRole || validRoles.includes(currentRole);
+
   useEffect(() => {
     if (settingsOpen && permissions.canManageUsers) {
       refreshAdminUsers();
@@ -924,9 +928,6 @@ function App() {
   }, [renaissance.section, renaissance.width, renaissance.projection, renaissance.frontOverhang, renaissance.sideOverhang, renaissance.supportBeams, renaissance.postCountOverride, renaissance.beamUpgrade, renaissance.windSpeed, renaissance.exposure]);
 
   const activeTier = pricingTiers[selectedTier] || pricingTiers.tier5 || appData.pricingTiers.tier5;
-  const currentRole = resolveRole(profile, session);
-  const permissions = getPermissions(currentRole);
-  const hasValidRole = !currentRole || validRoles.includes(currentRole);
   const selectedPlan = financingPlans.find((plan) => plan.id === selectedPlanId) || financingPlans[0];
 
   useEffect(() => {
