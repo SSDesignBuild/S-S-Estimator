@@ -1846,10 +1846,11 @@ function App() {
         )}
       </section>
 
-      <AccessPanel profile={profile || { role: currentRole }} permissions={permissions} />
+
+      {false && <AccessPanel profile={profile || { role: currentRole }} permissions={permissions} />}
 
 
-      {permissions.canManagePricing && (
+      {false && permissions.canManagePricing && (
         <section className="card admin-pricing-card">
           <div className="section-head compact-head">
             <div>
@@ -2453,16 +2454,19 @@ function App() {
               <div className="section-head compact-head no-margin-bottom">
                 <h3>Financing plan</h3>
               </div>
+              <div className="summary-row"><span>Financing Price</span><strong>{currency.format(financedSaleAmount)}</strong></div>
+              <label>
+                Deposit / cash down
+                <input type="number" inputMode="decimal" min="0" step="0.01" value={settings.depositAmount} onChange={(e) => setSettings((current) => ({ ...current, depositAmount: e.target.value }))} />
+              </label>
+              <div className="summary-row"><span>Amount being financed after deposit</span><strong>{currency.format(financedBase)}</strong></div>
+              <div className="summary-row accent"><span>{selectedPlan.label}</span><strong>{currency.format(monthlyPayment)}/mo</strong></div>
               <button className="ghost-btn financing-toggle" onClick={() => setFinancingOpen((value) => !value)}>{financingOpen ? "Hide options" : "Change plan"}</button>
               <div className="selected-plan-card">
                 <strong>{selectedPlan.label}</strong>
                 <span>{selectedPlan.term} · {selectedPlan.apr}</span>
                 <span>Payment factor {selectedPlan.paymentFactor}%</span>
               </div>
-              <label>
-                Deposit / cash down
-                <input type="number" inputMode="decimal" min="0" step="0.01" value={settings.depositAmount} onChange={(e) => setSettings((current) => ({ ...current, depositAmount: e.target.value }))} />
-              </label>
               {financingOpen && (
                 <div className="plan-list compact-plan-list">
                   {financingPlans.map((plan) => (
@@ -2476,9 +2480,6 @@ function App() {
                   ))}
                 </div>
               )}
-              <div className="summary-row"><span>Financing Price</span><strong>{currency.format(financedSaleAmount)}</strong></div>
-              <div className="summary-row"><span>Amount being financed after deposit</span><strong>{currency.format(financedBase)}</strong></div>
-              <div className="summary-row accent"><span>{selectedPlan.label}</span><strong>{currency.format(monthlyPayment)}/mo</strong></div>
               {selectedPlan.details ? <p className="small-note">{selectedPlan.details}</p> : null}
             </div>
           </section>
@@ -2513,19 +2514,22 @@ function App() {
             {!quotesLoading && savedQuotes.length === 0 ? <p className="small-note">No saved quotes yet.</p> : null}
             <div className="saved-quotes-list">
               {savedQuotes.map((quote) => (
-                <button key={quote.id} className={selectedQuoteId === quote.id ? "saved-quote-row active" : "saved-quote-row"} onClick={() => loadQuote(quote.id)}>
-                  <div>
-                    <strong>{quote.customer_name || "Untitled quote"}</strong>
-                    <span>{quote.customer_email || quote.customer_phone || "No customer contact yet"}</span>
-                    {permissions.canViewTeamQuotes && quote.owner_name ? <span className="owner-line">Owner: {quote.owner_name}</span> : null}
-                  </div>
-                  <div>
-                    <strong>{currency.format(quote.financing_price || quote.cash_price || 0)}</strong>
-                    <span>{quote.tier} · {new Date(quote.updated_at).toLocaleDateString()}</span>
-                    <span className={`status-pill mini status-${quote.status || "draft"}`}>{quote.status || "draft"}</span>
-                    {quote.ghl_estimate_id ? <span className="owner-line">GHL linked</span> : null}
-                  </div>
-                </button>
+                <div key={quote.id} className={selectedQuoteId === quote.id ? "saved-quote-row active" : "saved-quote-row"}>
+                  <button className="saved-quote-main" onClick={() => loadQuote(quote.id)}>
+                    <div>
+                      <strong>{quote.customer_name || "Untitled quote"}</strong>
+                      <span>{quote.customer_email || quote.customer_phone || "No customer contact yet"}</span>
+                      {permissions.canViewTeamQuotes && quote.owner_name ? <span className="owner-line">Owner: {quote.owner_name}</span> : null}
+                    </div>
+                    <div>
+                      <strong>{currency.format(quote.financing_price || quote.cash_price || 0)}</strong>
+                      <span>{quote.tier} · {new Date(quote.updated_at).toLocaleDateString()}</span>
+                      <span className={`status-pill mini status-${quote.status || "draft"}`}>{quote.status || "draft"}</span>
+                      {quote.ghl_estimate_id ? <span className="owner-line">GHL linked</span> : null}
+                    </div>
+                  </button>
+                  <button className="ghost-btn danger-btn row-delete-btn" onClick={() => deleteQuoteById(quote.id)} type="button">Delete</button>
+                </div>
               ))}
             </div>
           </section>
@@ -2568,6 +2572,131 @@ function App() {
                 <span>Show cash price</span>
               </label>
             </div>
+
+            <div className="help-block settings-access-block">
+              <AccessPanel profile={profile || { role: currentRole }} permissions={permissions} />
+            </div>
+
+            {permissions.canManagePricing && (
+              <div className="help-block settings-admin-block">
+                <section className="card admin-pricing-card in-settings">
+                  <div className="section-head compact-head">
+                    <div>
+                      <h2>Admin pricing foundation</h2>
+                      <p className="small-note">Edit live constants, tier multipliers, and base line prices in this pop-out.</p>
+                    </div>
+                    <div className="toolbar-buttons inline-actions">
+                      <button className="ghost-btn" onClick={() => setPricingEditorOpen((value) => !value)}>{pricingEditorOpen ? "Hide" : "Show"}</button>
+                      <button className="ghost-btn" onClick={refreshPricingSettings} disabled={pricingLoading}>{pricingLoading ? "Refreshing…" : "Refresh"}</button>
+                      <button className="ghost-btn" onClick={savePricingSettings} disabled={pricingSaving}>{pricingSaving ? "Saving…" : "Save pricing"}</button>
+                    </div>
+                  </div>
+                  {pricingMessage ? <p className="small-note success-note">{pricingMessage}</p> : null}
+                  {pricingEditorOpen && (
+                    <>
+                      <div className="admin-pricing-grid">
+                        <label>
+                          Tax rate
+                          <input type="number" inputMode="decimal" step="0.0001" value={pricingDraft.appDefaults.taxRate || ""} onChange={(e) => setPricingDraft((current) => ({ ...current, appDefaults: { ...current.appDefaults, taxRate: e.target.value } }))} />
+                        </label>
+                        <label>
+                          Taxable portion
+                          <input type="number" inputMode="decimal" step="0.01" value={pricingDraft.appDefaults.taxablePortion || ""} onChange={(e) => setPricingDraft((current) => ({ ...current, appDefaults: { ...current.appDefaults, taxablePortion: e.target.value } }))} />
+                        </label>
+                        <label>
+                          Permitting fee
+                          <input type="number" inputMode="decimal" step="0.01" value={pricingDraft.appDefaults.permittingFee || ""} onChange={(e) => setPricingDraft((current) => ({ ...current, appDefaults: { ...current.appDefaults, permittingFee: e.target.value } }))} />
+                        </label>
+                        <label>
+                          Financing markup
+                          <input type="number" inputMode="decimal" step="0.01" value={pricingDraft.appDefaults.financingMarkup || ""} onChange={(e) => setPricingDraft((current) => ({ ...current, appDefaults: { ...current.appDefaults, financingMarkup: e.target.value } }))} />
+                        </label>
+                      </div>
+                      <div className="admin-tier-grid">
+                        {Object.entries(pricingTiers).map(([key, tier]) => (
+                          <label key={`settings-admin-tier-${key}`}>
+                            {tier.label} multiplier
+                            <input type="number" inputMode="decimal" step="0.01" value={pricingDraft.tierMultipliers[key] || ""} onChange={(e) => setPricingDraft((current) => ({ ...current, tierMultipliers: { ...current.tierMultipliers, [key]: e.target.value } }))} />
+                          </label>
+                        ))}
+                      </div>
+                      <label className="standard-search-label admin-search-label">
+                        Search line items
+                        <input type="text" placeholder="Search permit, concrete, screen..." value={pricingEditorSearch} onChange={(e) => setPricingEditorSearch(e.target.value)} />
+                      </label>
+                      <div className="admin-subcard">
+                        <div className="section-head compact-head">
+                          <div>
+                            <h3>Add standard pricing service</h3>
+                            <p className="small-note">Add new services right into the standard pricing sheet without touching code again.</p>
+                          </div>
+                        </div>
+                        <div className="admin-pricing-grid">
+                          <label>
+                            Category
+                            <input type="text" value={newServiceDraft.category} onChange={(e) => setNewServiceDraft((current) => ({ ...current, category: e.target.value }))} />
+                          </label>
+                          <label>
+                            Service name
+                            <input type="text" value={newServiceDraft.name} onChange={(e) => setNewServiceDraft((current) => ({ ...current, name: e.target.value }))} />
+                          </label>
+                          <label>
+                            Unit
+                            <input type="text" value={newServiceDraft.unit} onChange={(e) => setNewServiceDraft((current) => ({ ...current, unit: e.target.value }))} />
+                          </label>
+                          <label>
+                            Base price
+                            <input type="number" inputMode="decimal" step="0.01" value={newServiceDraft.basePrice} onChange={(e) => setNewServiceDraft((current) => ({ ...current, basePrice: e.target.value }))} />
+                          </label>
+                        </div>
+                        <div className="toolbar-buttons inline-actions">
+                          <button className="ghost-btn" onClick={addCustomServiceToDraft}>Add service</button>
+                        </div>
+                        {!!pricingDraft.customServices?.length && (
+                          <div className="admin-pricing-list compact-list">
+                            {(pricingDraft.customServices || []).map((service) => (
+                              <div className="admin-line-price-row custom-service-row" key={`settings-custom-service-${service.id}`}>
+                                <span>
+                                  <strong>{service.name}</strong>
+                                  <small>{service.category} • {service.unit}</small>
+                                </span>
+                                <input type="text" value={service.category} onChange={(e) => updateCustomServiceDraft(service.id, "category", e.target.value)} />
+                                <input type="text" value={service.name} onChange={(e) => updateCustomServiceDraft(service.id, "name", e.target.value)} />
+                                <input type="text" value={service.unit} onChange={(e) => updateCustomServiceDraft(service.id, "unit", e.target.value)} />
+                                <input type="number" inputMode="decimal" step="0.01" value={service.basePrice} onChange={(e) => updateCustomServiceDraft(service.id, "basePrice", e.target.value)} />
+                                <button className="ghost-btn danger-btn" onClick={() => removeCustomServiceDraft(service.id)}>Remove</button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div className="admin-pricing-list">
+                        {categories.map((cat) => {
+                          const visibleItems = cat.items.filter((item) => !item.isCustom && (!pricingEditorSearch.trim() || item.name.toLowerCase().includes(pricingEditorSearch.trim().toLowerCase()) || cat.name.toLowerCase().includes(pricingEditorSearch.trim().toLowerCase())));
+                          if (!visibleItems.length) return null;
+                          return (
+                            <div key={`settings-admin-${cat.name}`} className="admin-pricing-group">
+                              <h3>{cat.name}</h3>
+                              <div className="admin-pricing-group-list">
+                                {visibleItems.map((item) => (
+                                  <label key={`settings-admin-line-${item.id}`} className="admin-line-price-row">
+                                    <span>
+                                      <strong>{item.name}</strong>
+                                      <small>{item.unit}</small>
+                                    </span>
+                                    <input type="number" inputMode="decimal" step="0.01" value={pricingDraft.linePrices[item.id] || ""} onChange={(e) => setPricingDraft((current) => ({ ...current, linePrices: { ...current.linePrices, [item.id]: e.target.value } }))} />
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
+                  )}
+                </section>
+              </div>
+            )}
 
             <div className="help-block access-help-block">
               <h3>Access level</h3>

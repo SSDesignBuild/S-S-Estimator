@@ -425,7 +425,7 @@ textarea {
 }
 
 .modal {
-  width: min(760px, 100%);
+  width: min(1080px, 100%);
   max-height: calc(100vh - 40px);
   overflow: auto;
 }
@@ -935,13 +935,35 @@ textarea:focus {
 .saved-quote-row {
   width: 100%;
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 0.75rem;
+  align-items: stretch;
   text-align: left;
   border: 1px solid var(--border-color);
   border-radius: 16px;
-  padding: 0.85rem 0.95rem;
+  padding: 0.6rem;
   background: var(--card-bg);
+}
+
+.saved-quote-main {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.75rem;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 0.25rem 0.35rem;
+  border-radius: 12px;
+}
+
+.saved-quote-main:hover {
+  background: var(--panel-soft);
+}
+
+.row-delete-btn {
+  align-self: center;
+  white-space: nowrap;
 }
 
 .saved-quote-row span {
@@ -1207,4 +1229,18 @@ textarea:focus {
   .ghl-mapping-row .ghost-btn {
     grid-column: span 2;
   }
+}
+
+
+.settings-access-block .access-panel {
+  margin-bottom: 0;
+}
+
+.settings-admin-block .admin-pricing-card {
+  margin-top: 0;
+  border-color: var(--line);
+}
+
+.settings-admin-block .admin-pricing-list {
+  max-height: 24rem;
 }
