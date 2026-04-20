@@ -2547,15 +2547,21 @@ function App() {
 
       {settingsOpen && (
         <div className="modal-backdrop" onClick={() => setSettingsOpen(false)}>
-          <section className="modal card" onClick={(e) => e.stopPropagation()}>
-            <div className="section-head compact-head">
+          <section className="modal card polished-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="section-head compact-head settings-modal-head">
               <div>
                 <h2>Settings & help</h2>
-                <p className="small-note">Theme, totals visibility, tutorial, and add-to-home-screen instructions.</p>
+                <p className="small-note">Tight controls, display options, and admin tools in one polished panel.</p>
               </div>
               <button className="ghost-btn" onClick={() => setSettingsOpen(false)}>Close</button>
             </div>
-            <div className="settings-grid compact-settings">
+            <div className="settings-hero">
+              <div className="settings-hero-copy">
+                <strong>Dial in the estimator your way</strong>
+                <span>Use this panel to keep the quoting experience clean for reps, discreet in front of homeowners, and quick to manage on desktop or iPhone.</span>
+              </div>
+            </div>
+            <div className="settings-grid compact-settings settings-display-grid">
               <div className="read-only-box"><span>Sales tax rate</span><strong>{(defaultSettings.taxRate * 100).toFixed(2)}%</strong></div>
               <div className="read-only-box"><span>Taxable portion</span><strong>{(defaultSettings.taxablePortion * 100).toFixed(0)}%</strong></div>
               <div className="read-only-box"><span>Base permitting fee</span><strong>{currency.format(defaultSettings.permittingFee)}</strong></div>
@@ -2573,12 +2579,14 @@ function App() {
               </label>
             </div>
 
-            <div className="help-block settings-access-block">
+            <div className="help-block section-card settings-access-block">
+              <div className="settings-section-head"><h3>Access & visibility</h3><p className="small-note">Review permissions and hide or reveal sensitive details from the live quoting flow.</p></div>
               <AccessPanel profile={profile || { role: currentRole }} permissions={permissions} />
             </div>
 
             {permissions.canManagePricing && (
-              <div className="help-block settings-admin-block">
+              <div className="help-block section-card settings-admin-block">
+                <div className="settings-section-head"><h3>Admin pricing controls</h3><p className="small-note">Adjust live pricing, multipliers, and integrations without leaving the estimator.</p></div>
                 <section className="card admin-pricing-card in-settings">
                   <div className="section-head compact-head">
                     <div>
@@ -2698,7 +2706,8 @@ function App() {
               </div>
             )}
 
-            <div className="help-block access-help-block">
+            <div className="help-block section-card access-help-block">
+              <div className="settings-section-head"><h3>Account summary</h3><p className="small-note">Quick glance at who is signed in and what this role can access.</p></div>
               <h3>Access level</h3>
               <div className="access-summary-list">
                 <div><strong>Signed in as:</strong> {profile?.full_name || session.user.email}</div>
@@ -2709,8 +2718,8 @@ function App() {
               </div>
             </div>
 
-            <div className="help-block">
-              <h3>How to use</h3>
+            <div className="help-block section-card">
+              <div className="settings-section-head"><h3>How to use</h3><p className="small-note">Fast reminders for reps so quoting stays smooth in the field.</p></div>
               <ol>
                 <li>Select the tier first.</li>
                 <li>Use the search bar to jump straight to the service you need.</li>
@@ -2720,8 +2729,8 @@ function App() {
               </ol>
             </div>
 
-            <div className="help-block">
-              <h3>Add to iPhone home screen</h3>
+            <div className="help-block section-card">
+              <div className="settings-section-head"><h3>Add to iPhone home screen</h3><p className="small-note">Save it like an app for faster launches during appointments.</p></div>
               <ol>
                 <li>Open the site in Safari.</li>
                 <li>Tap the Share button.</li>
