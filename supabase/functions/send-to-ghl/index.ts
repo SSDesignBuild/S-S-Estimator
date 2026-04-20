@@ -12,7 +12,7 @@ function json(body: unknown, status = 200) {
   });
 }
 
-const FUNCTION_VERSION = "v24f-altid-location";
+const FUNCTION_VERSION = "v24g-minimal-estimate-only";
 
 function normalizeMappingIndex(mappings: any[] = []) {
   const byKey = new Map<string, any>();
@@ -203,7 +203,6 @@ serve(async (req) => {
     const commonMeta = {
       altId: locationId,
       altType: "location",
-      locationId,
       contactId,
       title: `${quoteMeta.companyName || "S&S Design Build"} Estimate`,
       issueDate,
@@ -214,97 +213,55 @@ serve(async (req) => {
     };
 
     const minimalItems = preparedItems.map((item) => ({
-      name: item.name,
-      qty: item.qty,
-      price: item.amount,
-      description: item.description,
+      name: String(item.name || "Line item"),
+      qty: Number(item.qty || 1) || 1,
+      price: Number(item.amount || item.rate || item.unitPrice || 0) || 0,
+      description: String(item.description || "Estimator line item"),
     }));
 
-    const productItems = preparedItems.map((item) => {
-      if (item.type === "mapped" && item.productId) {
-        return {
-          productId: item.productId,
-          name: item.name,
-          qty: item.qty,
-          price: item.amount,
-          description: item.description,
-        };
-      }
-      return {
-        name: item.name,
-        qty: item.qty,
-        price: item.amount,
-        description: item.description,
-      };
+    const estimateBody = {
+      ...commonMeta,
+      items: minimalItems,
+    };
+
+    console.log(JSON.stringify({
+      tag: "send-to-ghl:estimate-create-request",
+      variant: "altId-location-minimal-items-only",
+      locationSources: { quoteMetaLocationId, fallbackLocationId, finalLocationId: locationId },
+      requestHeaders: { Version: "2021-07-28", Accept: "application/json", ContentType: "application/json" },
+      requestUrl: `${baseUrl}/invoices/estimate`,
+      body: estimateBody,
+    }));
+
+    const estimateRes = await fetch(`${baseUrl}/invoices/estimate`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Version: "2021-07-28",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(estimateBody),
     });
 
-    const estimatePayloads = [
-      {
-        label: "altId-location-minimal-items",
-        body: {
-          ...commonMeta,
-          items: minimalItems,
-        },
-      },
-      {
-        label: "altId-location-product-items",
-        body: {
-          ...commonMeta,
-          items: productItems,
-        },
-      },
-      {
-        label: "altId-location-with-opportunity",
-        body: {
-          ...commonMeta,
-          pipelineId: quoteMeta?.pipelineId || undefined,
-          opportunityStageId: quoteMeta?.opportunityStageId || undefined,
-          items: productItems,
-        },
-      },
-    ];
-
+    const estimateRaw = await estimateRes.text();
     let estimateJson: Record<string, unknown> = {};
-    let estimateStatus = 0;
-    let estimateVariant = "";
-    let estimateId: unknown = null;
-
-    for (const variant of estimatePayloads) {
-      console.log(JSON.stringify({
-        tag: "send-to-ghl:estimate-create-request",
-        variant: variant.label,
-        locationSources: { quoteMetaLocationId, fallbackLocationId, finalLocationId: locationId },
-        requestHeaders: { Version: "2021-07-28", Accept: "application/json", ContentType: "application/json" },
-        requestUrl: `${baseUrl}/invoices/estimate`,
-        body: variant.body,
-      }));
-
-      const estimateRes = await fetch(`${baseUrl}/invoices/estimate`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Version: "2021-07-28",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(variant.body),
-      });
-
-      const estimateRaw = await estimateRes.text();
-      try {
-        estimateJson = estimateRaw ? JSON.parse(estimateRaw) : {};
-      } catch {
-        estimateJson = { raw: estimateRaw };
-      }
-      estimateStatus = estimateRes.status;
-      estimateVariant = variant.label;
-      estimateId = (estimateJson?.estimate as Record<string, unknown> | undefined)?.id || estimateJson?.id || estimateJson?.estimateId || null;
-
-      console.log(JSON.stringify({ tag: "send-to-ghl:estimate-create-response", variant: variant.label, status: estimateStatus, ok: estimateRes.ok, body: estimateJson, estimateId }));
-
-      if (estimateRes.ok && estimateId) {
-        break;
-      }
+    try {
+      estimateJson = estimateRaw ? JSON.parse(estimateRaw) : {};
+    } catch {
+      estimateJson = { raw: estimateRaw };
     }
+    const estimateStatus = estimateRes.status;
+    const estimateVariant = "altId-location-minimal-items-only";
+    const estimateId = (estimateJson?.estimate as Record<string, unknown> | undefined)?.id || estimateJson?.id || estimateJson?.estimateId || null;
+
+    console.log(JSON.stringify({
+      tag: "send-to-ghl:estimate-create-response",
+      variant: estimateVariant,
+      status: estimateStatus,
+      ok: estimateRes.ok,
+      body: estimateJson,
+      estimateId,
+    }));
 
     if (!estimateId) {
       return json({
