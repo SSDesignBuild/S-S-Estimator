@@ -12,7 +12,7 @@ function json(body: unknown, status = 200) {
   });
 }
 
-const FUNCTION_VERSION = "v24c-location-debug";
+const FUNCTION_VERSION = "v24d-no-location-header";
 
 function normalizeMappingIndex(mappings: any[] = []) {
   const byKey = new Map<string, any>();
@@ -99,8 +99,7 @@ serve(async (req) => {
       headers: {
         Authorization: `Bearer ${token}`,
         Version: "2021-07-28",
-        "Content-Type": "application/json",
-        locationId,
+        "Content-Type": "application/json"
       },
       body: JSON.stringify(contactBody),
     });
@@ -223,7 +222,7 @@ serve(async (req) => {
         tag: "send-to-ghl:estimate-create-request",
         variant: variant.label,
         locationSources: { quoteMetaLocationId, fallbackLocationId, finalLocationId: locationId },
-        requestHeaders: { locationId, Version: "2021-07-28" },
+        requestHeaders: { Version: "2021-07-28" },
         body: variant.body,
       }));
 
