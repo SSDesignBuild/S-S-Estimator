@@ -12,7 +12,7 @@ function json(body: unknown, status = 200) {
   });
 }
 
-const FUNCTION_VERSION = "v24o-ghl-ui-schema-match";
+const FUNCTION_VERSION = "v24p-ghl-ui-exact-date-fix";
 const CONTACT_BASE_URL = "https://services.leadconnectorhq.com";
 const ESTIMATE_BASE_URL = "https://backend.leadconnectorhq.com";
 
@@ -63,16 +63,12 @@ function toE164(phone: unknown): string | undefined {
   return undefined;
 }
 
-function startOfLocalDayIso(date = new Date()) {
+function formatYyyyMmDd(date = new Date()) {
   const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d.toISOString();
-}
-
-function endOfLocalDayIso(date = new Date()) {
-  const d = new Date(date);
-  d.setHours(23, 59, 59, 999);
-  return d.toISOString();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 serve(async (req) => {
@@ -236,21 +232,16 @@ serve(async (req) => {
       },
       ...(estimateNumber > 0 ? { estimateNumber } : {}),
       estimateNumberPrefix,
-      expiryDate: endOfLocalDayIso(expiry),
+      expiryDate: formatYyyyMmDd(expiry),
       frequencySettings: {
         enabled: false,
       },
-      issueDate: startOfLocalDayIso(today),
+      issueDate: formatYyyyMmDd(today),
       items: customItems,
       liveMode: true,
       meta: {},
       opportunityDetails: null,
       termsNotes: safeString(quoteMeta.termsNotes || "", ""),
-      total: Number(customItems.reduce((sum, item) => sum + safeNumber((item as any).amount, 0), 0).toFixed(2)),
-      totalamountInUSD: Number(customItems.reduce((sum, item) => sum + safeNumber((item as any).amount, 0), 0).toFixed(2)),
-      automaticTaxesCalculated: false,
-      configuration: { precision: 4 },
-      contactId,
     };
 
     console.log(JSON.stringify({
@@ -277,7 +268,7 @@ serve(async (req) => {
     if (!estimateId) {
       return json({
         message: "Estimate creation did not return an estimate ID from GoHighLevel.",
-        triedVariant: "ghl-ui-schema-match",
+        triedVariant: "ghl-ui-exact-date-fix",
         functionVersion: FUNCTION_VERSION,
         usedLocationId: locationId,
         usedContactId: contactId,
@@ -292,7 +283,7 @@ serve(async (req) => {
       contactId,
       estimateId,
       functionVersion: FUNCTION_VERSION,
-      usedVariant: "ghl-ui-schema-match",
+      usedVariant: "ghl-ui-exact-date-fix",
       finalEstimateJson: estimateBody,
       finalItemsJson: customItems,
       debug: estimateJson,
