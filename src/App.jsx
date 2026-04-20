@@ -568,7 +568,9 @@ function getFanBeamUnit(addOns, projection) {
   return Math.round(p18 + step * (projection - 18));
 }
 
-function AuthScreen({ email, password, setEmail, setPassword, onSubmit, loading, error }) {
+function AuthScreen({ mode, setMode, email, password, setEmail, setPassword, fullName, setFullName, confirmPassword, setConfirmPassword, onSubmit, loading, error, info }) {
+  const isSignup = mode === "signup";
+
   return (
     <div className="auth-shell">
       <div className="auth-card card">
@@ -576,11 +578,30 @@ function AuthScreen({ email, password, setEmail, setPassword, onSubmit, loading,
           <img className="brand-logo" src="/logo-mark.png" alt="S&S Design Build" />
           <div>
             <h1>S&amp;S Design Build</h1>
-            <p>Sign in with your rep email and password to open the estimator.</p>
+            <p>{isSignup ? "Create your estimator account. New accounts default to sales rep until an admin changes the role." : "Sign in with your rep email and password to open the estimator."}</p>
           </div>
         </div>
 
+        <div className="auth-mode-row">
+          <button className={isSignup ? "ghost-btn" : "pill active"} type="button" onClick={() => setMode("signin")}>Sign in</button>
+          <button className={isSignup ? "pill active" : "ghost-btn"} type="button" onClick={() => setMode("signup")}>Create account</button>
+        </div>
+
         <form className="auth-form" onSubmit={onSubmit}>
+          {isSignup ? (
+            <label>
+              Full name
+              <input
+                type="text"
+                autoComplete="name"
+                placeholder="Your name"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                required
+              />
+            </label>
+          ) : null}
+
           <label>
             Email
             <input
@@ -597,23 +618,38 @@ function AuthScreen({ email, password, setEmail, setPassword, onSubmit, loading,
             Password
             <input
               type="password"
-              autoComplete="current-password"
-              placeholder="Enter your password"
+              autoComplete={isSignup ? "new-password" : "current-password"}
+              placeholder={isSignup ? "Create a password" : "Enter your password"}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
             />
           </label>
 
+          {isSignup ? (
+            <label>
+              Confirm password
+              <input
+                type="password"
+                autoComplete="new-password"
+                placeholder="Re-enter your password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                required
+              />
+            </label>
+          ) : null}
+
           {error ? <div className="auth-error">{error}</div> : null}
+          {info ? <div className="auth-info">{info}</div> : null}
 
           <button className="auth-submit" type="submit" disabled={loading}>
-            {loading ? "Signing in..." : "Sign in"}
+            {loading ? (isSignup ? "Creating account..." : "Signing in...") : (isSignup ? "Create account" : "Sign in")}
           </button>
         </form>
 
         <p className="auth-help">
-          Admin can create rep accounts in Supabase. Role access is now enforced for reps, managers, and admins.
+          New users can create an account here. New accounts default to sales rep, and an admin can change roles in Settings.
         </p>
       </div>
     </div>
@@ -626,10 +662,14 @@ function App() {
   const [profile, setProfile] = useState(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [authReady, setAuthReady] = useState(false);
+  const [authMode, setAuthMode] = useState("signin");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
+  const [authFullName, setAuthFullName] = useState("");
+  const [authConfirmPassword, setAuthConfirmPassword] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState("");
+  const [authInfo, setAuthInfo] = useState("");
   const [lineQtys, setLineQtys] = useState(defaultLineState);
   const [settings, setSettings] = useState(defaultSettings);
   const [customer, setCustomer] = useState(defaultCustomer);
@@ -660,7 +700,10 @@ function App() {
   const [pricingEditorOpen, setPricingEditorOpen] = useState(false);
   const [pricingEditorSearch, setPricingEditorSearch] = useState("");
   const [newServiceDraft, setNewServiceDraft] = useState({ category: "Custom Services", name: "", unit: "Each", basePrice: "" });
-    const touchStartX = useRef(null);
+  const [userAdminList, setUserAdminList] = useState([]);
+  const [userAdminLoading, setUserAdminLoading] = useState(false);
+  const [userAdminMessage, setUserAdminMessage] = useState("");
+  const touchStartX = useRef(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -741,6 +784,12 @@ function App() {
       isMounted = false;
     };
   }, [session?.user?.id]);
+
+  useEffect(() => {
+    if (settingsOpen && permissions.canManageUsers) {
+      refreshAdminUsers();
+    }
+  }, [settingsOpen, permissions.canManageUsers]);
 
   useEffect(() => {
     const saved = localStorage.getItem(storageKey);
@@ -1717,10 +1766,97 @@ function App() {
     setSaveMessage("Quote deleted.");
   }
 
-async function handleLogin(event) {
+async function refreshAdminUsers() {
+    if (!permissions.canManageUsers) return;
+    setUserAdminLoading(true);
+    setUserAdminMessage("");
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("id, full_name, email, role, created_at")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("Admin user list failed", error);
+      setUserAdminMessage(`Could not load users: ${formatSupabaseError(error, "unknown error")}`);
+      setUserAdminLoading(false);
+      return;
+    }
+
+    setUserAdminList(data || []);
+    setUserAdminLoading(false);
+  }
+
+  async function updateUserRole(userId, nextRole) {
+    if (!permissions.canManageUsers || !validRoles.includes(nextRole)) return;
+    setUserAdminMessage("");
+    const { data, error } = await supabase
+      .from("profiles")
+      .update({ role: nextRole, updated_at: new Date().toISOString() })
+      .eq("id", userId)
+      .select("id, full_name, email, role, created_at")
+      .single();
+
+    if (error) {
+      console.error("Update user role failed", error);
+      setUserAdminMessage(`Could not update role: ${formatSupabaseError(error, "unknown error")}`);
+      return;
+    }
+
+    setUserAdminList((current) => current.map((user) => (user.id === userId ? { ...user, ...(data || {}), role: nextRole } : user)));
+    if (profile?.id === userId) {
+      setProfile((current) => current ? { ...current, role: nextRole } : current);
+    }
+    setUserAdminMessage("User role updated.");
+  }
+
+  async function handleLogin(event) {
     event.preventDefault();
     setAuthError("");
+    setAuthInfo("");
     setAuthLoading(true);
+
+    if (authMode === "signup") {
+      if (!authFullName.trim()) {
+        setAuthError("Enter your full name.");
+        setAuthLoading(false);
+        return;
+      }
+      if (authPassword.length < 6) {
+        setAuthError("Password must be at least 6 characters.");
+        setAuthLoading(false);
+        return;
+      }
+      if (authPassword !== authConfirmPassword) {
+        setAuthError("Passwords do not match.");
+        setAuthLoading(false);
+        return;
+      }
+
+      const { data, error } = await supabase.auth.signUp({
+        email: authEmail.trim(),
+        password: authPassword,
+        options: {
+          data: {
+            full_name: authFullName.trim(),
+          },
+        },
+      });
+
+      if (error) {
+        setAuthError(error.message || "Could not create account.");
+      } else if (data?.session) {
+        setAuthInfo("Account created. You are signed in as sales rep until an admin changes your role.");
+        setAuthPassword("");
+        setAuthConfirmPassword("");
+      } else {
+        setAuthInfo("Account created. Check your email if confirmation is required, then sign in.");
+        setAuthMode("signin");
+        setAuthPassword("");
+        setAuthConfirmPassword("");
+      }
+      setAuthLoading(false);
+      return;
+    }
 
     const { error } = await supabase.auth.signInWithPassword({
       email: authEmail.trim(),
@@ -1731,6 +1867,7 @@ async function handleLogin(event) {
       setAuthError(error.message || "Sign-in failed. Check your email and password.");
     } else {
       setAuthPassword("");
+      setAuthConfirmPassword("");
     }
 
     setAuthLoading(false);
@@ -1790,13 +1927,24 @@ async function handleLogin(event) {
   if (!session) {
     return (
       <AuthScreen
+        mode={authMode}
+        setMode={(nextMode) => {
+          setAuthMode(nextMode);
+          setAuthError("");
+          setAuthInfo("");
+        }}
         email={authEmail}
         password={authPassword}
         setEmail={setAuthEmail}
         setPassword={setAuthPassword}
+        fullName={authFullName}
+        setFullName={setAuthFullName}
+        confirmPassword={authConfirmPassword}
+        setConfirmPassword={setAuthConfirmPassword}
         onSubmit={handleLogin}
         loading={authLoading}
         error={authError}
+        info={authInfo}
       />
     );
   }
@@ -2749,6 +2897,35 @@ async function handleLogin(event) {
                 <div><strong>Pricing editor:</strong> {permissions.canManagePricing ? "Admin access" : "Locked"}</div>
               </div>
             </div>
+
+            {permissions.canManageUsers && (
+              <div className="help-block section-card settings-users-block">
+                <div className="settings-section-head"><h3>User roles</h3><p className="small-note">New accounts default to sales rep. Admin can change roles here any time.</p></div>
+                <div className="toolbar-buttons inline-actions settings-user-actions">
+                  <button className="ghost-btn" onClick={refreshAdminUsers} disabled={userAdminLoading}>{userAdminLoading ? "Refreshing…" : "Refresh users"}</button>
+                </div>
+                {userAdminMessage ? <p className="small-note success-note">{userAdminMessage}</p> : null}
+                <div className="user-admin-list">
+                  {userAdminList.map((user) => (
+                    <div className="user-admin-row" key={`user-role-${user.id}`}>
+                      <div className="user-admin-meta">
+                        <strong>{user.full_name || user.email}</strong>
+                        <small>{user.email || "No email"}</small>
+                      </div>
+                      <label className="user-role-field">
+                        <span>Role</span>
+                        <select value={user.role || "sales_rep"} onChange={(e) => updateUserRole(user.id, e.target.value)}>
+                          <option value="sales_rep">sales rep</option>
+                          <option value="manager">manager</option>
+                          <option value="admin">admin</option>
+                        </select>
+                      </label>
+                    </div>
+                  ))}
+                  {!userAdminList.length && !userAdminLoading ? <p className="small-note">No users loaded yet.</p> : null}
+                </div>
+              </div>
+            )}
 
             <div className="help-block section-card">
               <div className="settings-section-head"><h3>How to use</h3><p className="small-note">Fast reminders for reps so quoting stays smooth in the field.</p></div>
