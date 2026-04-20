@@ -12,7 +12,7 @@ function json(body: unknown, status = 200) {
   });
 }
 
-const FUNCTION_VERSION = "v24p-ghl-ui-exact-date-fix";
+const FUNCTION_VERSION = "v24q-ghl-fixed-item-math";
 const CONTACT_BASE_URL = "https://services.leadconnectorhq.com";
 const ESTIMATE_BASE_URL = "https://backend.leadconnectorhq.com";
 
@@ -163,7 +163,8 @@ serve(async (req) => {
         const qty = safeNumber(item?.quantity ?? 0, 0);
         const unitPrice = safeNumber(item?.unit_price ?? item?.unitPrice ?? 0, 0);
         const lineTotal = safeNumber(item?.line_total ?? item?.lineTotal ?? qty * unitPrice, qty * unitPrice);
-        const amount = lineTotal > 0 ? lineTotal : unitPrice;
+        // HighLevel expects amount to be the per-unit price, not the extended line total.
+        const amount = unitPrice > 0 ? unitPrice : (qty > 0 ? lineTotal / qty : lineTotal);
         return {
           taxes: [],
           taxInclusive: false,
@@ -268,7 +269,7 @@ serve(async (req) => {
     if (!estimateId) {
       return json({
         message: "Estimate creation did not return an estimate ID from GoHighLevel.",
-        triedVariant: "ghl-ui-exact-date-fix",
+        triedVariant: "ghl-fixed-item-math",
         functionVersion: FUNCTION_VERSION,
         usedLocationId: locationId,
         usedContactId: contactId,
@@ -283,7 +284,7 @@ serve(async (req) => {
       contactId,
       estimateId,
       functionVersion: FUNCTION_VERSION,
-      usedVariant: "ghl-ui-exact-date-fix",
+      usedVariant: "ghl-fixed-item-math",
       finalEstimateJson: estimateBody,
       finalItemsJson: customItems,
       debug: estimateJson,
