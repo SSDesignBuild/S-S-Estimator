@@ -12,7 +12,7 @@ function json(body: unknown, status = 200) {
   });
 }
 
-const FUNCTION_VERSION = "v24b-estimate-live";
+const FUNCTION_VERSION = "v24c-location-debug";
 
 function normalizeMappingIndex(mappings: any[] = []) {
   const byKey = new Map<string, any>();
@@ -63,14 +63,19 @@ serve(async (req) => {
     const quoteMeta = payload?.quoteMeta || {};
     const lineItems = Array.isArray(payload?.lineItems) ? payload.lineItems : [];
     const ghlMappings = normalizeMappingIndex(Array.isArray(payload?.ghlMappings) ? payload.ghlMappings : []);
-    const locationId = quoteMeta.locationId || fallbackLocationId;
+    const quoteMetaLocationId = quoteMeta.locationId || null;
+    const locationId = quoteMetaLocationId || fallbackLocationId;
 
     console.log(JSON.stringify({
       tag: "send-to-ghl:start",
       functionVersion: FUNCTION_VERSION,
       hasToken: Boolean(token),
       quoteId: payload?.quoteId || null,
-      locationId,
+      locationSources: {
+        quoteMetaLocationId,
+        fallbackLocationId,
+        finalLocationId: locationId,
+      },
       lineItemCount: lineItems.length,
       mappingCount: ghlMappings.size,
       customerEmail: customer?.email || null,
@@ -95,6 +100,7 @@ serve(async (req) => {
         Authorization: `Bearer ${token}`,
         Version: "2021-07-28",
         "Content-Type": "application/json",
+        locationId,
       },
       body: JSON.stringify(contactBody),
     });
@@ -213,7 +219,13 @@ serve(async (req) => {
     let estimateId: unknown = null;
 
     for (const variant of estimatePayloads) {
-      console.log(JSON.stringify({ tag: "send-to-ghl:estimate-create-request", variant: variant.label, body: variant.body }));
+      console.log(JSON.stringify({
+        tag: "send-to-ghl:estimate-create-request",
+        variant: variant.label,
+        locationSources: { quoteMetaLocationId, fallbackLocationId, finalLocationId: locationId },
+        requestHeaders: { locationId, Version: "2021-07-28" },
+        body: variant.body,
+      }));
 
       const estimateRes = await fetch(`${baseUrl}/invoices/estimate`, {
         method: "POST",
@@ -247,6 +259,8 @@ serve(async (req) => {
         message: "Estimate creation did not return an estimate ID from GoHighLevel.",
         contactId,
         triedVariant: estimateVariant,
+        usedLocationId: locationId,
+        locationSources: { quoteMetaLocationId, fallbackLocationId, finalLocationId: locationId },
         debug: estimateJson,
         mappedItemCount: preparedItems.filter((item) => item.type === "mapped").length,
         customItemCount: preparedItems.filter((item) => item.type === "custom").length,
