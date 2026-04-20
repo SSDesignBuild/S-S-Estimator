@@ -12,7 +12,7 @@ function json(body: unknown, status = 200) {
   });
 }
 
-const FUNCTION_VERSION = "v24h-estimate-required-fields";
+const FUNCTION_VERSION = "v24i-remove-tostring-bug";
 
 function normalizeMappingIndex(mappings: any[] = []) {
   const byKey = new Map<string, any>();
@@ -33,6 +33,33 @@ function normalizeMappingIndex(mappings: any[] = []) {
     });
   }
   return byKey;
+}
+
+
+function safeString(value: unknown, fallback = "") {
+  if (value === null || value === undefined) return fallback;
+  return String(value);
+}
+
+function safeNumber(value: unknown, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function omitNilDeep(input: unknown): unknown {
+  if (Array.isArray(input)) {
+    return input.map(omitNilDeep).filter((v) => v !== undefined);
+  }
+  if (input && typeof input === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
+      const cleaned = omitNilDeep(v);
+      if (cleaned !== undefined) out[k] = cleaned;
+    }
+    return out;
+  }
+  if (input === null || input === undefined) return undefined;
+  return input;
 }
 
 function tierToMappingKey(tier: string | null | undefined) {
@@ -200,57 +227,76 @@ serve(async (req) => {
     const issueDate = today.toISOString().slice(0, 10);
     const expiryDate = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-    const estimateName = String(`${quoteMeta.companyName || "S&S Design Build"} Estimate`).slice(0, 40) || "Estimate";
-    const businessDetails = {
-      name: String(quoteMeta.companyName || "S&S Design Build"),
-      email: String(quoteMeta.companyEmail || ""),
-      phone: String(quoteMeta.companyPhone || ""),
-      website: String(quoteMeta.companyWebsite || ""),
-    };
-    const contactDetails = {
-      id: String(contactId || ""),
-      name: String(customer.name || customer.fullName || "Quote Customer"),
-      email: String(customer.email || ""),
-      phone: String(customer.phone || ""),
-    };
-    const frequencySettings = {
+    const locationObj = (locationPreflightJson?.location as Record<string, unknown> | undefined) || {};
+    const businessObj = (locationObj?.business as Record<string, unknown> | undefined) || {};
+
+    const estimateName = safeString(`${quoteMeta.companyName || businessObj.name || "S&S Design Build"} Estimate`, "Estimate").slice(0, 40) || "Estimate";
+    const businessDetails = omitNilDeep({
+      name: safeString(quoteMeta.companyName || businessObj.name || locationObj.name || "S&S Design Build", "S&S Design Build"),
+      email: safeString(quoteMeta.companyEmail || businessObj.email || locationObj.email || "support@snsdesignbuild.com", "support@snsdesignbuild.com"),
+      phone: safeString(quoteMeta.companyPhone || locationObj.phone || "+16155555555", "+16155555555"),
+      website: safeString(quoteMeta.companyWebsite || businessObj.website || locationObj.website || "https://www.snsdesignbuild.com/", "https://www.snsdesignbuild.com/"),
+      address: safeString(businessObj.address || locationObj.address || "", ""),
+      city: safeString(businessObj.city || locationObj.city || "", ""),
+      state: safeString(businessObj.state || locationObj.state || "", ""),
+      country: safeString(businessObj.country || locationObj.country || "US", "US"),
+      postalCode: safeString(businessObj.postalCode || locationObj.postalCode || "", ""),
+    });
+    const customerName = safeString(customer.name || customer.fullName || "Quote Customer", "Quote Customer");
+    const nameParts = customerName.split(/\s+/).filter(Boolean);
+    const contactDetails = omitNilDeep({
+      id: safeString(contactId, ""),
+      name: customerName,
+      firstName: safeString(nameParts[0] || customerName, customerName),
+      lastName: safeString(nameParts.slice(1).join(" ") || "Customer", "Customer"),
+      email: safeString(customer.email || "no-email@snsdesignbuild.com", "no-email@snsdesignbuild.com"),
+      phone: safeString(customer.phone || "+10000000000", "+10000000000"),
+      address: safeString(customer.address || "", ""),
+      city: safeString(customer.city || quoteMeta.city || "", ""),
+      state: safeString(customer.state || "", ""),
+      country: safeString(customer.country || "US", "US"),
+      postalCode: safeString(customer.postalCode || "", ""),
+    });
+    const frequencySettings = omitNilDeep({
       type: "one_time",
       value: 1,
-    };
-    const discount = {
+      interval: 1,
+      recurring: false,
+    });
+    const discount = omitNilDeep({
       type: "amount",
       value: 0,
-    };
+    });
 
-    const minimalItems = preparedItems.length > 0 ? preparedItems.map((item) => ({
-      name: String(item.name || "Line item"),
-      qty: Number(item.qty || 1) || 1,
-      price: Number(item.amount || item.rate || item.unitPrice || 0) || 0,
-      description: String(item.description || "Estimator line item"),
+    const minimalItems = preparedItems.length > 0 ? preparedItems.map((item, idx) => ({
+      name: safeString(item.name || `Line item ${idx + 1}`, `Line item ${idx + 1}`).slice(0, 40),
+      qty: safeNumber(item.qty || 1, 1),
+      price: safeNumber(item.amount || item.rate || item.unitPrice || 0, 0),
+      description: safeString(item.description || "Estimator line item", "Estimator line item"),
     })) : [{
       name: "Estimator Line Item",
       qty: 1,
-      price: Number(quoteMeta.cashPrice || quoteMeta.financingPrice || 0) || 0,
+      price: safeNumber(quoteMeta.cashPrice || quoteMeta.financingPrice || 0, 0),
       description: "Generated fallback line item",
     }];
 
-    const estimateBody = {
-      altId: locationId,
+    const estimateBody = omitNilDeep({
+      altId: safeString(locationId, ""),
       altType: "location",
-      contactId,
+      contactId: safeString(contactId, ""),
       name: estimateName,
       title: estimateName,
-      issueDate,
-      expiryDate,
+      issueDate: safeString(issueDate, ""),
+      expiryDate: safeString(expiryDate, ""),
       currency: "USD",
       items: minimalItems,
       terms: "Valid for 30 days.",
-      notes: `Estimator Quote ${payload?.quoteId || ""}`.trim(),
+      notes: safeString(`Estimator Quote ${payload?.quoteId || ""}`.trim(), "Estimator Quote"),
       businessDetails,
       contactDetails,
       frequencySettings,
       discount,
-    };
+    }) as Record<string, unknown>;
 
     console.log(JSON.stringify({
       tag: "send-to-ghl:estimate-create-request",
