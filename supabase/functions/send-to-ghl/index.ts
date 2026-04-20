@@ -12,7 +12,7 @@ function json(body: unknown, status = 200) {
   });
 }
 
-const FUNCTION_VERSION = "v24l-custom-items-only";
+const FUNCTION_VERSION = "v24m-custom-items-schema-fix";
 
 function safeString(value: unknown, fallback = "") {
   if (value === null || value === undefined) return fallback;
@@ -58,6 +58,15 @@ function looksLikeSummaryItem(name: string) {
   ].includes(n);
 }
 
+async function readJsonSafe(res: Response) {
+  const raw = await res.text();
+  try {
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return { raw };
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -76,43 +85,34 @@ serve(async (req) => {
     const customer = payload?.customer || {};
     const quoteMeta = payload?.quoteMeta || {};
     const lineItems = Array.isArray(payload?.lineItems) ? payload.lineItems : [];
-    const quoteMetaLocationId = quoteMeta.locationId || null;
-    const locationId = quoteMetaLocationId || fallbackLocationId;
+    const locationId = quoteMeta.locationId || fallbackLocationId;
 
     if (!locationId) {
       return json({ message: "Missing GoHighLevel Location ID.", functionVersion: FUNCTION_VERSION }, 400);
     }
 
-    const locationPreflightUrl = `${baseUrl}/locations/${locationId}`;
-    const locationPreflightRes = await fetch(locationPreflightUrl, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Version: "2021-07-28",
-        Accept: "application/json",
-      },
-    });
-    const locationPreflightRaw = await locationPreflightRes.text();
-    let locationPreflightJson: Record<string, unknown> = {};
-    try {
-      locationPreflightJson = locationPreflightRaw ? JSON.parse(locationPreflightRaw) : {};
-    } catch {
-      locationPreflightJson = { raw: locationPreflightRaw };
-    }
+    const authHeaders = {
+      Authorization: `Bearer ${token}`,
+      Version: "2021-07-28",
+      Accept: "application/json",
+    };
 
+    const locationPreflightUrl = `${baseUrl}/locations/${locationId}`;
+    const locationPreflightRes = await fetch(locationPreflightUrl, { method: "GET", headers: authHeaders });
+    const locationPreflightJson = await readJsonSafe(locationPreflightRes);
     if (!locationPreflightRes.ok) {
       return json({
         message: "GoHighLevel location preflight failed before estimate create.",
         functionVersion: FUNCTION_VERSION,
         usedLocationId: locationId,
-        locationPreflightUrl,
         debug: locationPreflightJson,
       }, locationPreflightRes.status >= 400 && locationPreflightRes.status < 600 ? locationPreflightRes.status : 400);
     }
 
     const contactBody = {
       locationId,
-      firstName: customer.name || "Quote Customer",
+      firstName: safeString(customer.name || customer.firstName || "Quote", "Quote"),
+      lastName: safeString(customer.lastName || "Customer", "Customer"),
       email: customer.email || undefined,
       phone: customer.phone || undefined,
       source: "S&S Estimator",
@@ -120,23 +120,10 @@ serve(async (req) => {
 
     const contactRes = await fetch(`${baseUrl}/contacts/upsert`, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Version: "2021-07-28",
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
+      headers: { ...authHeaders, "Content-Type": "application/json" },
       body: JSON.stringify(contactBody),
     });
-
-    const contactRaw = await contactRes.text();
-    let contactJson: Record<string, unknown> = {};
-    try {
-      contactJson = contactRaw ? JSON.parse(contactRaw) : {};
-    } catch {
-      contactJson = { raw: contactRaw };
-    }
-
+    const contactJson = await readJsonSafe(contactRes);
     if (!contactRes.ok) {
       return json({
         message: typeof contactJson?.message === "string" ? contactJson.message : "Contact upsert failed in GoHighLevel.",
@@ -145,7 +132,10 @@ serve(async (req) => {
       }, contactRes.status >= 400 && contactRes.status < 600 ? contactRes.status : 400);
     }
 
-    const contactId = (contactJson?.contact as Record<string, unknown> | undefined)?.id || contactJson?.id || null;
+    const contactId = safeString((contactJson?.contact as Record<string, unknown> | undefined)?.id || contactJson?.id || "", "");
+    if (!contactId) {
+      return json({ message: "GoHighLevel contact upsert did not return a contact ID.", functionVersion: FUNCTION_VERSION, debug: contactJson }, 502);
+    }
 
     const customItems = lineItems
       .map((item: any, index: number) => {
@@ -157,26 +147,24 @@ serve(async (req) => {
         return {
           name,
           qty: qty > 0 ? qty : 1,
-          price: unitPrice > 0 ? unitPrice : lineTotal,
+          amount: unitPrice > 0 ? unitPrice : lineTotal,
           description,
-          lineTotal,
+          currency: "USD",
+          taxes: [],
         };
       })
-      .filter((item) => item.name && !looksLikeSummaryItem(item.name) && item.price > 0);
+      .filter((item) => item.name && !looksLikeSummaryItem(item.name) && item.amount > 0);
 
     const itemsForEstimate = customItems.length > 0
-      ? customItems.map((item) => ({
-          name: item.name,
-          qty: item.qty,
-          price: item.price,
-          description: item.description || undefined,
-        }))
+      ? customItems
       : [{
           name: "Estimator Quote",
           qty: 1,
-          price: safeNumber(quoteMeta?.cashPrice ?? quoteMeta?.subtotal ?? 0, 0),
+          amount: safeNumber(quoteMeta?.cashPrice ?? quoteMeta?.subtotal ?? 0, 0),
           description: "Fallback line item",
-        }].filter((item) => item.price > 0);
+          currency: "USD",
+          taxes: [],
+        }].filter((item) => item.amount > 0);
 
     if (itemsForEstimate.length === 0) {
       return json({
@@ -192,91 +180,108 @@ serve(async (req) => {
 
     const locationObj = (locationPreflightJson?.location as Record<string, unknown> | undefined) || {};
     const businessObj = (locationObj?.business as Record<string, unknown> | undefined) || {};
+    const currency = safeString(locationObj.currency || quoteMeta.currency || "USD", "USD");
 
-    const estimateName = safeString(`${quoteMeta.companyName || businessObj.name || "S&S Design Build"} Estimate`, "Estimate").slice(0, 40) || "Estimate";
+    let estimateNumber: string | undefined;
+    try {
+      const numUrl = `${baseUrl}/invoices/estimate/number/generate?altId=${encodeURIComponent(locationId)}&altType=location`;
+      const numRes = await fetch(numUrl, { method: "GET", headers: authHeaders });
+      const numJson = await readJsonSafe(numRes);
+      estimateNumber = safeString(numJson?.estimateNumber || numJson?.number || "", "") || undefined;
+    } catch {
+      estimateNumber = undefined;
+    }
 
-    const businessDetails = omitNilDeep({
+    const nameBase = safeString(quoteMeta.customerName || customer.name || "Quote Customer", "Quote Customer");
+    const estimateName = safeString(`${nameBase} Estimate`, "Estimate").slice(0, 40) || "Estimate";
+
+    const businessDetails = {
       name: safeString(quoteMeta.companyName || businessObj.name || locationObj.name || "S&S Design Build", "S&S Design Build"),
-      email: safeString(quoteMeta.companyEmail || businessObj.email || locationObj.email || "support@snsdesignbuild.com", "support@snsdesignbuild.com"),
-      phone: safeString(quoteMeta.companyPhone || locationObj.phone || "+16155555555", "+16155555555"),
-      website: safeString(quoteMeta.companyWebsite || businessObj.website || locationObj.website || "https://www.snsdesignbuild.com/", "https://www.snsdesignbuild.com/"),
       address: safeString(businessObj.address || locationObj.address || "", ""),
-      city: safeString(businessObj.city || locationObj.city || "", ""),
-      state: safeString(businessObj.state || locationObj.state || "", ""),
-      country: safeString(businessObj.country || locationObj.country || "US", "US"),
-      postalCode: safeString(businessObj.postalCode || locationObj.postalCode || "", ""),
-    });
+      phoneNo: safeString(quoteMeta.companyPhone || locationObj.phone || "+16155555555", "+16155555555"),
+      website: safeString(quoteMeta.companyWebsite || businessObj.website || locationObj.website || "https://www.snsdesignbuild.com/", "https://www.snsdesignbuild.com/"),
+      logoUrl: safeString(businessObj.logoUrl || locationObj.logoUrl || "", ""),
+      customValues: [],
+    };
 
     const customerName = safeString(customer.name || customer.fullName || "Quote Customer", "Quote Customer");
     const nameParts = customerName.split(/\s+/).filter(Boolean);
-    const contactDetails = omitNilDeep({
-      id: safeString(contactId, ""),
+    const contactDetails = {
+      id: contactId,
+      phoneNo: safeString(customer.phone || "+10000000000", "+10000000000"),
+      email: safeString(customer.email || "no-email@snsdesignbuild.com", "no-email@snsdesignbuild.com"),
+      customFields: [],
       name: customerName,
+      address: {
+        countryCode: safeString(customer.country || "US", "US"),
+        addressLine1: safeString(customer.address || customer.street || "", ""),
+        addressLine2: safeString(customer.address2 || "", ""),
+        city: safeString(customer.city || quoteMeta.city || "", ""),
+        state: safeString(customer.state || "", ""),
+        postalCode: safeString(customer.postalCode || "", ""),
+      },
+      additionalEmails: [],
+      companyName: safeString(customer.businessName || "", ""),
       firstName: safeString(nameParts[0] || customerName, customerName),
       lastName: safeString(nameParts.slice(1).join(" ") || "Customer", "Customer"),
-      email: safeString(customer.email || "no-email@snsdesignbuild.com", "no-email@snsdesignbuild.com"),
-      phone: safeString(customer.phone || "+10000000000", "+10000000000"),
-      address: safeString(customer.address || "", ""),
-      city: safeString(customer.city || quoteMeta.city || "", ""),
-      state: safeString(customer.state || "", ""),
-      country: safeString(customer.country || "US", "US"),
-      postalCode: safeString(customer.postalCode || "", ""),
-    });
+    };
 
-    const frequencySettings = omitNilDeep({
-      type: "one_time",
-      value: 1,
-      interval: 1,
-      recurring: false,
-    });
-
-    const discount = omitNilDeep({
-      type: "amount",
-      value: 0,
-    });
+    const total = Number(itemsForEstimate.reduce((sum, item) => sum + safeNumber((item as any).amount, 0) * safeNumber((item as any).qty, 1), 0).toFixed(2));
 
     const estimateBody = omitNilDeep({
       altId: safeString(locationId, ""),
       altType: "location",
-      contactId: safeString(contactId, ""),
+      contactId,
       name: estimateName,
-      issueDate: safeString(issueDate, ""),
-      expiryDate: safeString(expiryDate, ""),
-      currency: safeString(locationObj.currency || "USD", "USD"),
-      items: itemsForEstimate,
-      terms: "Valid for 30 days.",
-      notes: safeString(`Estimator Quote ${payload?.quoteId || ""}`.trim(), "Estimator Quote"),
+      title: "ESTIMATE",
+      estimateNumber,
+      issueDate,
+      expiryDate,
+      currency,
       businessDetails,
       contactDetails,
-      frequencySettings,
-      discount,
+      frequencySettings: {
+        type: "one_time",
+        value: 1,
+        interval: 1,
+        recurring: false,
+      },
+      discount: {
+        type: "amount",
+        value: 0,
+      },
+      items: itemsForEstimate,
+      amount: total,
+      total,
+      totalSummary: {
+        subTotal: total,
+        discount: 0,
+      },
+      terms: "Valid for 30 days.",
+      notes: safeString(`Created from S&S Estimator quote ${payload?.quoteId || ""}`.trim(), "Created from S&S Estimator"),
     }) as Record<string, unknown>;
+
+    console.log(JSON.stringify({
+      tag: "send-to-ghl:estimate-create-request",
+      functionVersion: FUNCTION_VERSION,
+      requestUrl: `${baseUrl}/invoices/estimate`,
+      finalEstimateJson: estimateBody,
+      finalItemsJson: estimateBody.items,
+    }));
 
     const estimateRes = await fetch(`${baseUrl}/invoices/estimate`, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Version: "2021-07-28",
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
+      headers: { ...authHeaders, "Content-Type": "application/json" },
       body: JSON.stringify(estimateBody),
     });
 
-    const estimateRaw = await estimateRes.text();
-    let estimateJson: Record<string, unknown> = {};
-    try {
-      estimateJson = estimateRaw ? JSON.parse(estimateRaw) : {};
-    } catch {
-      estimateJson = { raw: estimateRaw };
-    }
-
-    const estimateId = (estimateJson?.estimate as Record<string, unknown> | undefined)?.id || estimateJson?.id || estimateJson?.estimateId || null;
+    const estimateJson = await readJsonSafe(estimateRes);
+    const estimateId = safeString((estimateJson?.estimate as Record<string, unknown> | undefined)?.id || estimateJson?.id || estimateJson?.estimateId || "", "") || null;
 
     if (!estimateId) {
       return json({
         message: "Estimate creation did not return an estimate ID from GoHighLevel.",
-        triedVariant: "custom-items-only-final-path",
+        triedVariant: "custom-items-only-schema-fix",
         functionVersion: FUNCTION_VERSION,
         usedLocationId: locationId,
         usedContactId: contactId,
@@ -291,7 +296,7 @@ serve(async (req) => {
       contactId,
       estimateId,
       functionVersion: FUNCTION_VERSION,
-      usedVariant: "custom-items-only-final-path",
+      usedVariant: "custom-items-only-schema-fix",
       finalEstimateJson: estimateBody,
       finalItemsJson: estimateBody.items,
     });
