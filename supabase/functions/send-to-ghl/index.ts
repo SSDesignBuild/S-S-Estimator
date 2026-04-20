@@ -12,7 +12,7 @@ function json(body: unknown, status = 200) {
   });
 }
 
-const FUNCTION_VERSION = "v24d-no-location-header";
+const FUNCTION_VERSION = "v24e-estimate-request-debug";
 
 function normalizeMappingIndex(mappings: any[] = []) {
   const byKey = new Map<string, any>();
@@ -84,6 +84,40 @@ serve(async (req) => {
 
     if (!locationId) {
       return json({ message: "Missing GoHighLevel Location ID." }, 400);
+    }
+
+    const locationPreflightUrl = `${baseUrl}/locations/${locationId}`;
+    const locationPreflightRes = await fetch(locationPreflightUrl, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Version: "2021-07-28",
+        Accept: "application/json",
+      },
+    });
+    const locationPreflightRaw = await locationPreflightRes.text();
+    let locationPreflightJson: Record<string, unknown> = {};
+    try {
+      locationPreflightJson = locationPreflightRaw ? JSON.parse(locationPreflightRaw) : {};
+    } catch {
+      locationPreflightJson = { raw: locationPreflightRaw };
+    }
+    console.log(JSON.stringify({
+      tag: "send-to-ghl:location-preflight-response",
+      url: locationPreflightUrl,
+      status: locationPreflightRes.status,
+      ok: locationPreflightRes.ok,
+      body: locationPreflightJson,
+    }));
+
+    if (!locationPreflightRes.ok) {
+      return json({
+        message: "GoHighLevel location preflight failed before estimate create.",
+        functionVersion: FUNCTION_VERSION,
+        usedLocationId: locationId,
+        locationPreflightUrl,
+        debug: locationPreflightJson,
+      }, locationPreflightRes.status >= 400 && locationPreflightRes.status < 600 ? locationPreflightRes.status : 400);
     }
 
     const contactBody = {
@@ -222,7 +256,8 @@ serve(async (req) => {
         tag: "send-to-ghl:estimate-create-request",
         variant: variant.label,
         locationSources: { quoteMetaLocationId, fallbackLocationId, finalLocationId: locationId },
-        requestHeaders: { Version: "2021-07-28" },
+        requestHeaders: { Version: "2021-07-28", Accept: "application/json", ContentType: "application/json" },
+        requestUrl: `${baseUrl}/invoices/estimate`,
         body: variant.body,
       }));
 
@@ -264,6 +299,8 @@ serve(async (req) => {
         mappedItemCount: preparedItems.filter((item) => item.type === "mapped").length,
         customItemCount: preparedItems.filter((item) => item.type === "custom").length,
         functionVersion: FUNCTION_VERSION,
+        estimateRequestUrl: `${baseUrl}/invoices/estimate`,
+        locationPreflight: { ok: locationPreflightRes.ok, status: locationPreflightRes.status, url: locationPreflightUrl },
       }, estimateStatus >= 400 && estimateStatus < 600 ? estimateStatus : 502);
     }
 
