@@ -12,7 +12,7 @@ function json(body: unknown, status = 200) {
   });
 }
 
-const FUNCTION_VERSION = "v24g-minimal-estimate-only";
+const FUNCTION_VERSION = "v24h-estimate-required-fields";
 
 function normalizeMappingIndex(mappings: any[] = []) {
   const byKey = new Map<string, any>();
@@ -200,28 +200,56 @@ serve(async (req) => {
     const issueDate = today.toISOString().slice(0, 10);
     const expiryDate = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-    const commonMeta = {
-      altId: locationId,
-      altType: "location",
-      contactId,
-      title: `${quoteMeta.companyName || "S&S Design Build"} Estimate`,
-      issueDate,
-      expiryDate,
-      currency: "USD",
-      terms: "Valid for 30 days.",
-      notes: `Estimator Quote ${payload?.quoteId || ""}`.trim(),
+    const estimateName = String(`${quoteMeta.companyName || "S&S Design Build"} Estimate`).slice(0, 40) || "Estimate";
+    const businessDetails = {
+      name: String(quoteMeta.companyName || "S&S Design Build"),
+      email: String(quoteMeta.companyEmail || ""),
+      phone: String(quoteMeta.companyPhone || ""),
+      website: String(quoteMeta.companyWebsite || ""),
+    };
+    const contactDetails = {
+      id: String(contactId || ""),
+      name: String(customer.name || customer.fullName || "Quote Customer"),
+      email: String(customer.email || ""),
+      phone: String(customer.phone || ""),
+    };
+    const frequencySettings = {
+      type: "one_time",
+      value: 1,
+    };
+    const discount = {
+      type: "amount",
+      value: 0,
     };
 
-    const minimalItems = preparedItems.map((item) => ({
+    const minimalItems = preparedItems.length > 0 ? preparedItems.map((item) => ({
       name: String(item.name || "Line item"),
       qty: Number(item.qty || 1) || 1,
       price: Number(item.amount || item.rate || item.unitPrice || 0) || 0,
       description: String(item.description || "Estimator line item"),
-    }));
+    })) : [{
+      name: "Estimator Line Item",
+      qty: 1,
+      price: Number(quoteMeta.cashPrice || quoteMeta.financingPrice || 0) || 0,
+      description: "Generated fallback line item",
+    }];
 
     const estimateBody = {
-      ...commonMeta,
+      altId: locationId,
+      altType: "location",
+      contactId,
+      name: estimateName,
+      title: estimateName,
+      issueDate,
+      expiryDate,
+      currency: "USD",
       items: minimalItems,
+      terms: "Valid for 30 days.",
+      notes: `Estimator Quote ${payload?.quoteId || ""}`.trim(),
+      businessDetails,
+      contactDetails,
+      frequencySettings,
+      discount,
     };
 
     console.log(JSON.stringify({
