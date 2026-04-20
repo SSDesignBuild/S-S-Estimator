@@ -1685,7 +1685,39 @@ function App() {
     setSaveMessage("Quote deleted.");
   }
 
-  async function handleLogin(event) {
+  
+  async function deleteQuoteById(quoteIdToDelete) {
+    if (!quoteIdToDelete) {
+      setSaveMessage("Could not delete quote: missing quote id.");
+      return;
+    }
+
+    const confirmed = window.confirm("Delete this saved quote? This cannot be undone.");
+    if (!confirmed) return;
+
+    const { error: lineDeleteError } = await supabase.from("quote_lines").delete().eq("quote_id", quoteIdToDelete);
+    if (lineDeleteError) {
+      console.error("Delete quote lines failed", lineDeleteError);
+    }
+
+    const { error } = await supabase.from("quotes").delete().eq("id", quoteIdToDelete);
+    if (error) {
+      console.error("Delete quote failed", error);
+      setSaveMessage(`Could not delete quote: ${formatSupabaseError(error, "unknown error")}`);
+      return;
+    }
+
+    setSavedQuotes((current) => current.filter((quote) => quote.id !== quoteIdToDelete));
+
+    if (selectedQuoteId === quoteIdToDelete) {
+      clearAll();
+    }
+
+    await refreshSavedQuotes();
+    setSaveMessage("Quote deleted.");
+  }
+
+async function handleLogin(event) {
     event.preventDefault();
     setAuthError("");
     setAuthLoading(true);
@@ -2528,7 +2560,7 @@ function App() {
                       {quote.ghl_estimate_id ? <span className="owner-line">GHL linked</span> : null}
                     </div>
                   </button>
-                  <button className="ghost-btn danger-btn row-delete-btn" onClick={() => deleteQuoteById(quote.id)} type="button">Delete</button>
+                  <button className="ghost-btn danger-btn row-delete-btn" onClick={(event) => { event.stopPropagation(); deleteQuoteById(quote.id); }} type="button">Delete</button>
                 </div>
               ))}
             </div>
