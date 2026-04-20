@@ -366,6 +366,51 @@ textarea {
   color: var(--gold-strong);
 }
 
+
+.included-items-section {
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.included-items-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.included-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: color-mix(in oklab, var(--card) 82%, var(--bg) 18%);
+  align-items: center;
+}
+
+.included-item-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.included-item-main strong {
+  font-size: 0.98rem;
+  line-height: 1.25;
+}
+
+.included-item-main span {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.included-item-total {
+  white-space: nowrap;
+  color: var(--gold-strong);
+  font-size: 0.95rem;
+}
+
 .plan-list {
   display: grid;
   gap: 8px;

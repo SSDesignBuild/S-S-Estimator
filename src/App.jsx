@@ -1139,6 +1139,45 @@ function App() {
     return Array.from(new Set(issues));
   }, [activeItems, lineQtys, matchedCityRule, renaissance.fanBeams, renaissanceCalc]);
 
+  const includedQuoteItemsFull = useMemo(() => {
+    const rows = activeItems.map((item) => ({
+      key: item.id,
+      category: item.category || "General",
+      name: item.name || "Line item",
+      quantity: Number.isFinite(+item.qty) ? +item.qty : 0,
+      unitLabel: item.unit || "Each",
+      total: Number.isFinite(item.extended) ? +item.extended.toFixed(2) : 0,
+      type: "standard"
+    }));
+
+    if (renaissanceCalc.total > 0) {
+      rows.push({
+        key: "renaissance-main-summary",
+        category: "Renaissance",
+        name: `${renaissanceCalc.key} ${renaissanceCalc.width || 0}' x ${renaissanceCalc.projection || 0}'`,
+        quantity: 1,
+        unitLabel: "Each",
+        total: Number.isFinite(renaissanceCalc.baseTiered) ? +renaissanceCalc.baseTiered.toFixed(2) : 0,
+        type: "renaissance"
+      });
+
+      renaissanceCalc.adders.forEach((adder) => {
+        if (!Number.isFinite(adder.amount) || adder.amount <= 0) return;
+        rows.push({
+          key: `renaissance-summary-${slugify(adder.label)}`,
+          category: "Renaissance",
+          name: adder.label,
+          quantity: 1,
+          unitLabel: "Each",
+          total: +adder.amount.toFixed(2),
+          type: "renaissance"
+        });
+      });
+    }
+
+    return rows;
+  }, [activeItems, renaissanceCalc]);
+
   const lineCount = activeItems.length + (renaissanceCalc.total > 0 ? 1 : 0);
 
   function updateQty(id, value) {
@@ -2621,6 +2660,29 @@ async function refreshAdminUsers() {
               </div>
             </div>
             {selectedQuoteId ? <div className="ghl-link-box small-note">GoHighLevel contact ID: {savedQuotes.find((q) => q.id === selectedQuoteId)?.ghl_contact_id || "Not sent yet"} · Estimate ID: {savedQuotes.find((q) => q.id === selectedQuoteId)?.ghl_estimate_id || "Not sent yet"}</div> : null}
+            <div className="summary-section included-items-section">
+              <div className="section-head compact-head no-margin-bottom">
+                <div>
+                  <h3>Included in this quote</h3>
+                  <p className="small-note">Everything currently included in the quote.</p>
+                </div>
+              </div>
+              {includedQuoteItemsFull.length ? (
+                <div className="included-items-list">
+                  {includedQuoteItemsFull.map((item) => (
+                    <div className="included-item" key={item.key}>
+                      <div className="included-item-main">
+                        <strong>{item.name}</strong>
+                        <span>{item.category} · Qty {item.quantity} {item.unitLabel}</span>
+                      </div>
+                      <strong className="included-item-total">{currency.format(item.total)}</strong>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="small-note">No services added yet.</p>
+              )}
+            </div>
             <div className="summary-row"><span>Subtotal</span><strong>{currency.format(subtotal)}</strong></div>
             <div className="summary-row"><span>Sales tax on 40%</span><strong>{currency.format(salesTax)}</strong></div>
             <div className="summary-row"><span>Permitting + location fees</span><strong>{currency.format(permittingFee)}</strong></div>
