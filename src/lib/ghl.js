@@ -12,6 +12,15 @@ export async function sendQuoteToGhl(supabase, payload) {
           const cloned = error.context.clone ? error.context.clone() : error.context;
           const json = await cloned.json();
           detailedMessage = json?.message || detailedMessage;
+          if (json?.triedVariant) {
+            detailedMessage += ` Tried variant: ${json.triedVariant}.`;
+          }
+          if (json?.usedVariant) {
+            detailedMessage += ` Used variant: ${json.usedVariant}.`;
+          }
+          if (json?.functionVersion) {
+            detailedMessage += ` Function: ${json.functionVersion}.`;
+          }
           if (json?.debug) {
             detailedMessage += ` ${typeof json.debug === 'string' ? json.debug : JSON.stringify(json.debug)}`;
           }

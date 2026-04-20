@@ -12,6 +12,8 @@ function json(body: unknown, status = 200) {
   });
 }
 
+const FUNCTION_VERSION = "v24b-estimate-live";
+
 function normalizeMappingIndex(mappings: any[] = []) {
   const byKey = new Map<string, any>();
   for (const mapping of mappings) {
@@ -65,6 +67,7 @@ serve(async (req) => {
 
     console.log(JSON.stringify({
       tag: "send-to-ghl:start",
+      functionVersion: FUNCTION_VERSION,
       hasToken: Boolean(token),
       quoteId: payload?.quoteId || null,
       locationId,
@@ -154,13 +157,13 @@ serve(async (req) => {
       };
     });
 
-    const estimateBody = {
+    const commonMeta = {
       locationId,
+      contactId,
       altType: "contact",
       altId: contactId,
-      contactId,
-      name: `${quoteMeta.companyName || "S&S Design Build"} Estimate`,
       title: `${quoteMeta.companyName || "S&S Design Build"} Estimate`,
+      name: `${quoteMeta.companyName || "S&S Design Build"} Estimate`,
       issueDate: new Date().toISOString(),
       currency: "USD",
       subtotal: payload?.totals?.subtotal || 0,
@@ -177,51 +180,88 @@ serve(async (req) => {
         county: quoteMeta?.county || null,
         financingPlanName: quoteMeta?.financingPlanName || null,
       },
-      items: preparedItems,
-      lineItems: preparedItems,
     };
 
-    console.log(JSON.stringify({ tag: "send-to-ghl:estimate-create-request", body: estimateBody }));
-
-    const estimateRes = await fetch(`${baseUrl}/invoices/estimate`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Version: "2021-07-28",
-        "Content-Type": "application/json",
+    const estimatePayloads = [
+      {
+        label: "lineItems+items",
+        body: {
+          ...commonMeta,
+          items: preparedItems,
+          lineItems: preparedItems,
+        },
       },
-      body: JSON.stringify(estimateBody),
-    });
+      {
+        label: "lineItems-only",
+        body: {
+          ...commonMeta,
+          lineItems: preparedItems,
+        },
+      },
+      {
+        label: "items-only",
+        body: {
+          ...commonMeta,
+          items: preparedItems,
+        },
+      },
+    ];
 
-    const estimateRaw = await estimateRes.text();
     let estimateJson: Record<string, unknown> = {};
-    try {
-      estimateJson = estimateRaw ? JSON.parse(estimateRaw) : {};
-    } catch {
-      estimateJson = { raw: estimateRaw };
+    let estimateStatus = 0;
+    let estimateVariant = "";
+    let estimateId: unknown = null;
+
+    for (const variant of estimatePayloads) {
+      console.log(JSON.stringify({ tag: "send-to-ghl:estimate-create-request", variant: variant.label, body: variant.body }));
+
+      const estimateRes = await fetch(`${baseUrl}/invoices/estimate`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Version: "2021-07-28",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(variant.body),
+      });
+
+      const estimateRaw = await estimateRes.text();
+      try {
+        estimateJson = estimateRaw ? JSON.parse(estimateRaw) : {};
+      } catch {
+        estimateJson = { raw: estimateRaw };
+      }
+      estimateStatus = estimateRes.status;
+      estimateVariant = variant.label;
+      estimateId = (estimateJson?.estimate as Record<string, unknown> | undefined)?.id || estimateJson?.id || estimateJson?.estimateId || null;
+
+      console.log(JSON.stringify({ tag: "send-to-ghl:estimate-create-response", variant: variant.label, status: estimateStatus, ok: estimateRes.ok, body: estimateJson, estimateId }));
+
+      if (estimateRes.ok && estimateId) {
+        break;
+      }
     }
 
-    console.log(JSON.stringify({ tag: "send-to-ghl:estimate-create-response", status: estimateRes.status, ok: estimateRes.ok, body: estimateJson }));
-
-    if (!estimateRes.ok) {
+    if (!estimateId) {
       return json({
-        message: typeof estimateJson?.message === "string" ? estimateJson.message : "Estimate creation failed in GoHighLevel.",
+        message: "Estimate creation did not return an estimate ID from GoHighLevel.",
         contactId,
-        preparedEstimate: estimateBody,
+        triedVariant: estimateVariant,
         debug: estimateJson,
-      }, estimateRes.status >= 400 && estimateRes.status < 600 ? estimateRes.status : 400);
+        mappedItemCount: preparedItems.filter((item) => item.type === "mapped").length,
+        customItemCount: preparedItems.filter((item) => item.type === "custom").length,
+        functionVersion: FUNCTION_VERSION,
+      }, estimateStatus >= 400 && estimateStatus < 600 ? estimateStatus : 502);
     }
-
-    const estimateId = (estimateJson?.estimate as Record<string, unknown> | undefined)?.id || estimateJson?.id || estimateJson?.estimateId || null;
 
     return json({
-      message: estimateId
-        ? "GoHighLevel contact and estimate created successfully."
-        : "GoHighLevel contact created. Estimate request accepted, but no estimate ID was returned.",
+      message: "GoHighLevel contact and estimate created successfully.",
       contactId,
       estimateId,
       mappedItemCount: preparedItems.filter((item) => item.type === "mapped").length,
       customItemCount: preparedItems.filter((item) => item.type === "custom").length,
+      functionVersion: FUNCTION_VERSION,
+      usedVariant: estimateVariant,
     });
   } catch (err) {
     console.error("[send-to-ghl] Unhandled error", err);

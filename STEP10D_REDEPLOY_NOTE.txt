@@ -1,0 +1,5 @@
+After copying these files into GitHub, redeploy the Edge Function from this exact codebase:
+
+npx supabase functions deploy send-to-ghl --use-api --no-verify-jwt
+
+This patch adds live estimate-creation variants and returns the exact HighLevel response when no estimate ID comes back.
