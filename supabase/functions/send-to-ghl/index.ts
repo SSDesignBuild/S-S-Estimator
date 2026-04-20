@@ -12,7 +12,7 @@ function json(body: unknown, status = 200) {
   });
 }
 
-const FUNCTION_VERSION = "v24e-estimate-request-debug";
+const FUNCTION_VERSION = "v24f-altid-location";
 
 function normalizeMappingIndex(mappings: any[] = []) {
   const byKey = new Map<string, any>();
@@ -196,52 +196,70 @@ serve(async (req) => {
       };
     });
 
+    const today = new Date();
+    const issueDate = today.toISOString().slice(0, 10);
+    const expiryDate = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
     const commonMeta = {
+      altId: locationId,
+      altType: "location",
       locationId,
       contactId,
-      altType: "contact",
-      altId: contactId,
       title: `${quoteMeta.companyName || "S&S Design Build"} Estimate`,
-      name: `${quoteMeta.companyName || "S&S Design Build"} Estimate`,
-      issueDate: new Date().toISOString(),
+      issueDate,
+      expiryDate,
       currency: "USD",
-      subtotal: payload?.totals?.subtotal || 0,
-      total: payload?.totals?.financingPrice || payload?.totals?.cashPrice || 0,
-      pipelineId: quoteMeta?.pipelineId || undefined,
-      opportunityStageId: quoteMeta?.opportunityStageId || undefined,
-      businessDetails: {
-        name: quoteMeta.companyName || "S&S Design Build",
-      },
-      customFields: {
-        estimatorQuoteId: payload?.quoteId || null,
-        tier: quoteMeta?.tier || null,
-        city: quoteMeta?.city || null,
-        county: quoteMeta?.county || null,
-        financingPlanName: quoteMeta?.financingPlanName || null,
-      },
+      terms: "Valid for 30 days.",
+      notes: `Estimator Quote ${payload?.quoteId || ""}`.trim(),
     };
+
+    const minimalItems = preparedItems.map((item) => ({
+      name: item.name,
+      qty: item.qty,
+      price: item.amount,
+      description: item.description,
+    }));
+
+    const productItems = preparedItems.map((item) => {
+      if (item.type === "mapped" && item.productId) {
+        return {
+          productId: item.productId,
+          name: item.name,
+          qty: item.qty,
+          price: item.amount,
+          description: item.description,
+        };
+      }
+      return {
+        name: item.name,
+        qty: item.qty,
+        price: item.amount,
+        description: item.description,
+      };
+    });
 
     const estimatePayloads = [
       {
-        label: "lineItems+items",
+        label: "altId-location-minimal-items",
         body: {
           ...commonMeta,
-          items: preparedItems,
-          lineItems: preparedItems,
+          items: minimalItems,
         },
       },
       {
-        label: "lineItems-only",
+        label: "altId-location-product-items",
         body: {
           ...commonMeta,
-          lineItems: preparedItems,
+          items: productItems,
         },
       },
       {
-        label: "items-only",
+        label: "altId-location-with-opportunity",
         body: {
           ...commonMeta,
-          items: preparedItems,
+          pipelineId: quoteMeta?.pipelineId || undefined,
+          opportunityStageId: quoteMeta?.opportunityStageId || undefined,
+          items: productItems,
         },
       },
     ];
