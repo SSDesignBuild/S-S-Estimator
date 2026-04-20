@@ -12,7 +12,7 @@ function json(body: unknown, status = 200) {
   });
 }
 
-const FUNCTION_VERSION = "v24i-remove-tostring-bug";
+const FUNCTION_VERSION = "v24j-priceid-only-test";
 
 function normalizeMappingIndex(mappings: any[] = []) {
   const byKey = new Map<string, any>();
@@ -268,28 +268,33 @@ serve(async (req) => {
       value: 0,
     });
 
-    const minimalItems = preparedItems.length > 0 ? preparedItems.map((item, idx) => ({
-      name: safeString(item.name || `Line item ${idx + 1}`, `Line item ${idx + 1}`).slice(0, 40),
-      qty: safeNumber(item.qty || 1, 1),
-      price: safeNumber(item.amount || item.rate || item.unitPrice || 0, 0),
-      description: safeString(item.description || "Estimator line item", "Estimator line item"),
-    })) : [{
-      name: "Estimator Line Item",
-      qty: 1,
-      price: safeNumber(quoteMeta.cashPrice || quoteMeta.financingPrice || 0, 0),
-      description: "Generated fallback line item",
-    }];
+    const mappedPriceItems = preparedItems
+      .filter((item) => item.type === "mapped" && safeString(item.priceId || "", "").trim())
+      .map((item) => ({
+        priceId: safeString(item.priceId, "").trim(),
+        qty: safeNumber(item.qty || 1, 1),
+      }))
+      .filter((item) => item.priceId);
+
+    if (mappedPriceItems.length === 0) {
+      return json({
+        message: "No mapped priceId items were available for this quote/tier.",
+        functionVersion: FUNCTION_VERSION,
+        tier: quoteMeta?.tier || null,
+        mappedItemCount: preparedItems.filter((item) => item.type === "mapped").length,
+        customItemCount: preparedItems.filter((item) => item.type === "custom").length,
+      }, 400);
+    }
 
     const estimateBody = omitNilDeep({
       altId: safeString(locationId, ""),
       altType: "location",
       contactId: safeString(contactId, ""),
       name: estimateName,
-      title: estimateName,
       issueDate: safeString(issueDate, ""),
       expiryDate: safeString(expiryDate, ""),
       currency: "USD",
-      items: minimalItems,
+      items: [mappedPriceItems[0]],
       terms: "Valid for 30 days.",
       notes: safeString(`Estimator Quote ${payload?.quoteId || ""}`.trim(), "Estimator Quote"),
       businessDetails,
@@ -300,7 +305,7 @@ serve(async (req) => {
 
     console.log(JSON.stringify({
       tag: "send-to-ghl:estimate-create-request",
-      variant: "altId-location-minimal-items-only",
+      variant: "priceid-only-single-mapped-item",
       locationSources: { quoteMetaLocationId, fallbackLocationId, finalLocationId: locationId },
       requestHeaders: { Version: "2021-07-28", Accept: "application/json", ContentType: "application/json" },
       requestUrl: `${baseUrl}/invoices/estimate`,
@@ -325,7 +330,7 @@ serve(async (req) => {
       estimateJson = { raw: estimateRaw };
     }
     const estimateStatus = estimateRes.status;
-    const estimateVariant = "altId-location-minimal-items-only";
+    const estimateVariant = "priceid-only-single-mapped-item";
     const estimateId = (estimateJson?.estimate as Record<string, unknown> | undefined)?.id || estimateJson?.id || estimateJson?.estimateId || null;
 
     console.log(JSON.stringify({
