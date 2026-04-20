@@ -12,7 +12,7 @@ function json(body: unknown, status = 200) {
   });
 }
 
-const FUNCTION_VERSION = "v24m-custom-items-schema-fix";
+const FUNCTION_VERSION = "v24n-contact-first-schema-fix";
 
 function safeString(value: unknown, fallback = "") {
   if (value === null || value === undefined) return fallback;
@@ -67,10 +67,18 @@ async function readJsonSafe(res: Response) {
   }
 }
 
+function toE164(phone: unknown): string | undefined {
+  const raw = safeString(phone, "").trim();
+  if (!raw) return undefined;
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  if (digits.length === 10) return `+1${digits}`;
+  if (raw.startsWith("+") && digits.length >= 10) return `+${digits}`;
+  return undefined;
+}
+
 serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   const token = Deno.env.get("GHL_PRIVATE_INTEGRATION_TOKEN");
   const fallbackLocationId = Deno.env.get("GHL_LOCATION_ID") || null;
@@ -97,8 +105,7 @@ serve(async (req) => {
       Accept: "application/json",
     };
 
-    const locationPreflightUrl = `${baseUrl}/locations/${locationId}`;
-    const locationPreflightRes = await fetch(locationPreflightUrl, { method: "GET", headers: authHeaders });
+    const locationPreflightRes = await fetch(`${baseUrl}/locations/${locationId}`, { method: "GET", headers: authHeaders });
     const locationPreflightJson = await readJsonSafe(locationPreflightRes);
     if (!locationPreflightRes.ok) {
       return json({
@@ -109,14 +116,14 @@ serve(async (req) => {
       }, locationPreflightRes.status >= 400 && locationPreflightRes.status < 600 ? locationPreflightRes.status : 400);
     }
 
-    const contactBody = {
+    const contactBody = omitNilDeep({
       locationId,
-      firstName: safeString(customer.name || customer.firstName || "Quote", "Quote"),
+      firstName: safeString(customer.firstName || customer.name || "Quote", "Quote"),
       lastName: safeString(customer.lastName || "Customer", "Customer"),
-      email: customer.email || undefined,
-      phone: customer.phone || undefined,
+      email: safeString(customer.email || "", "") || undefined,
+      phone: toE164(customer.phone),
       source: "S&S Estimator",
-    };
+    });
 
     const contactRes = await fetch(`${baseUrl}/contacts/upsert`, {
       method: "POST",
@@ -143,28 +150,20 @@ serve(async (req) => {
         const qty = safeNumber(item?.quantity ?? 0, 0);
         const unitPrice = safeNumber(item?.unit_price ?? item?.unitPrice ?? 0, 0);
         const lineTotal = safeNumber(item?.line_total ?? item?.lineTotal ?? qty * unitPrice, qty * unitPrice);
-        const description = safeString(item?.category || item?.source_type || item?.unit || "", "").trim();
+        const price = unitPrice > 0 ? unitPrice : lineTotal;
         return {
           name,
           qty: qty > 0 ? qty : 1,
-          amount: unitPrice > 0 ? unitPrice : lineTotal,
-          description,
-          currency: "USD",
-          taxes: [],
+          price,
+          description: safeString(item?.category || item?.source_type || item?.unit || "", "").trim() || undefined,
         };
       })
-      .filter((item) => item.name && !looksLikeSummaryItem(item.name) && item.amount > 0);
+      .filter((item) => item.name && !looksLikeSummaryItem(item.name) && item.price > 0);
 
+    const fallbackAmount = safeNumber(quoteMeta?.cashPrice ?? quoteMeta?.subtotal ?? 0, 0);
     const itemsForEstimate = customItems.length > 0
       ? customItems
-      : [{
-          name: "Estimator Quote",
-          qty: 1,
-          amount: safeNumber(quoteMeta?.cashPrice ?? quoteMeta?.subtotal ?? 0, 0),
-          description: "Fallback line item",
-          currency: "USD",
-          taxes: [],
-        }].filter((item) => item.amount > 0);
+      : (fallbackAmount > 0 ? [{ name: "Estimator Quote", qty: 1, price: fallbackAmount, description: "Fallback line item" }] : []);
 
     if (itemsForEstimate.length === 0) {
       return json({
@@ -182,81 +181,53 @@ serve(async (req) => {
     const businessObj = (locationObj?.business as Record<string, unknown> | undefined) || {};
     const currency = safeString(locationObj.currency || quoteMeta.currency || "USD", "USD");
 
-    let estimateNumber: string | undefined;
-    try {
-      const numUrl = `${baseUrl}/invoices/estimate/number/generate?altId=${encodeURIComponent(locationId)}&altType=location`;
-      const numRes = await fetch(numUrl, { method: "GET", headers: authHeaders });
-      const numJson = await readJsonSafe(numRes);
-      estimateNumber = safeString(numJson?.estimateNumber || numJson?.number || "", "") || undefined;
-    } catch {
-      estimateNumber = undefined;
-    }
-
-    const nameBase = safeString(quoteMeta.customerName || customer.name || "Quote Customer", "Quote Customer");
-    const estimateName = safeString(`${nameBase} Estimate`, "Estimate").slice(0, 40) || "Estimate";
-
-    const businessDetails = {
-      name: safeString(quoteMeta.companyName || businessObj.name || locationObj.name || "S&S Design Build", "S&S Design Build"),
-      address: safeString(businessObj.address || locationObj.address || "", ""),
-      phoneNo: safeString(quoteMeta.companyPhone || locationObj.phone || "+16155555555", "+16155555555"),
-      website: safeString(quoteMeta.companyWebsite || businessObj.website || locationObj.website || "https://www.snsdesignbuild.com/", "https://www.snsdesignbuild.com/"),
-      logoUrl: safeString(businessObj.logoUrl || locationObj.logoUrl || "", ""),
-      customValues: [],
-    };
-
-    const customerName = safeString(customer.name || customer.fullName || "Quote Customer", "Quote Customer");
+    const customerName = safeString(customer.name || customer.fullName || `${customer.firstName || ""} ${customer.lastName || ""}`.trim() || "Quote Customer", "Quote Customer");
     const nameParts = customerName.split(/\s+/).filter(Boolean);
-    const contactDetails = {
-      id: contactId,
-      phoneNo: safeString(customer.phone || "+10000000000", "+10000000000"),
-      email: safeString(customer.email || "no-email@snsdesignbuild.com", "no-email@snsdesignbuild.com"),
-      customFields: [],
-      name: customerName,
-      address: {
-        countryCode: safeString(customer.country || "US", "US"),
-        addressLine1: safeString(customer.address || customer.street || "", ""),
-        addressLine2: safeString(customer.address2 || "", ""),
-        city: safeString(customer.city || quoteMeta.city || "", ""),
-        state: safeString(customer.state || "", ""),
-        postalCode: safeString(customer.postalCode || "", ""),
-      },
-      additionalEmails: [],
-      companyName: safeString(customer.businessName || "", ""),
-      firstName: safeString(nameParts[0] || customerName, customerName),
-      lastName: safeString(nameParts.slice(1).join(" ") || "Customer", "Customer"),
-    };
-
-    const total = Number(itemsForEstimate.reduce((sum, item) => sum + safeNumber((item as any).amount, 0) * safeNumber((item as any).qty, 1), 0).toFixed(2));
+    const e164 = toE164(customer.phone) || toE164(locationObj.phone) || "+16155495309";
 
     const estimateBody = omitNilDeep({
       altId: safeString(locationId, ""),
       altType: "location",
-      contactId,
-      name: estimateName,
-      title: "ESTIMATE",
-      estimateNumber,
+      contactId: safeString(contactId, ""),
+      name: safeString(`${customerName} Estimate`, "Estimate").slice(0, 40),
       issueDate,
       expiryDate,
       currency,
-      businessDetails,
-      contactDetails,
+      businessDetails: {
+        name: safeString(quoteMeta.companyName || businessObj.name || locationObj.name || "S&S Design Build", "S&S Design Build"),
+        email: safeString(quoteMeta.companyEmail || businessObj.email || locationObj.email || "sergio@snsdesignbuild.com", "sergio@snsdesignbuild.com"),
+        phoneNo: toE164(quoteMeta.companyPhone || locationObj.phone) || "+16155495309",
+        website: safeString(quoteMeta.companyWebsite || businessObj.website || locationObj.website || "https://www.snsdesignbuild.com/", "https://www.snsdesignbuild.com/"),
+        address: {
+          addressLine1: safeString(businessObj.address || locationObj.address || "", ""),
+          city: safeString(businessObj.city || locationObj.city || "", ""),
+          state: safeString(businessObj.state || locationObj.state || "", ""),
+          country: safeString(businessObj.country || locationObj.country || "US", "US"),
+          postalCode: safeString(businessObj.postalCode || locationObj.postalCode || "", ""),
+        },
+      },
+      contactDetails: {
+        name: customerName,
+        firstName: safeString(nameParts[0] || customerName, customerName),
+        lastName: safeString(nameParts.slice(1).join(" ") || "Customer", "Customer"),
+        email: safeString(customer.email || quoteMeta.customerEmail || "sergio@snsdesignbuild.com", "sergio@snsdesignbuild.com"),
+        phoneNo: e164,
+        address: {
+          addressLine1: safeString(customer.address || customer.street || "", ""),
+          city: safeString(customer.city || quoteMeta.city || "", ""),
+          state: safeString(customer.state || "", ""),
+          country: safeString(customer.country || "US", "US"),
+          postalCode: safeString(customer.postalCode || "", ""),
+        },
+      },
       frequencySettings: {
-        type: "one_time",
-        value: 1,
-        interval: 1,
-        recurring: false,
+        enabled: false,
       },
       discount: {
-        type: "amount",
+        type: "percentage",
         value: 0,
       },
       items: itemsForEstimate,
-      amount: total,
-      total,
-      totalSummary: {
-        subTotal: total,
-        discount: 0,
-      },
       terms: "Valid for 30 days.",
       notes: safeString(`Created from S&S Estimator quote ${payload?.quoteId || ""}`.trim(), "Created from S&S Estimator"),
     }) as Record<string, unknown>;
@@ -281,7 +252,7 @@ serve(async (req) => {
     if (!estimateId) {
       return json({
         message: "Estimate creation did not return an estimate ID from GoHighLevel.",
-        triedVariant: "custom-items-only-schema-fix",
+        triedVariant: "contact-first-schema-fix",
         functionVersion: FUNCTION_VERSION,
         usedLocationId: locationId,
         usedContactId: contactId,
@@ -296,7 +267,7 @@ serve(async (req) => {
       contactId,
       estimateId,
       functionVersion: FUNCTION_VERSION,
-      usedVariant: "custom-items-only-schema-fix",
+      usedVariant: "contact-first-schema-fix",
       finalEstimateJson: estimateBody,
       finalItemsJson: estimateBody.items,
     });
