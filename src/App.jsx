@@ -90,6 +90,11 @@ function formatSupabaseError(error, fallback) {
   return error.message || error.details || error.hint || fallback;
 }
 
+function safeString(value, fallback = "") {
+  if (value === null || value === undefined) return fallback;
+  return String(value);
+}
+
 function unitMeasurementText(unit) {
   const normalized = safeString(unit, "").toLowerCase();
   if (normalized.includes("sqft") || normalized.includes("square")) return "Pricing is measured and billed per square foot.";
@@ -1284,7 +1289,7 @@ function App() {
   }
 
   async function refreshPricingSettings() {
-    if (!session?.user?.id) return;
+    if (!session?.user?.id) return null;
     setPricingLoading(true);
     setPricingMessage("");
 
@@ -1502,7 +1507,7 @@ function App() {
 
 
   useEffect(() => {
-    if (!session?.user?.id) return;
+    if (!session?.user?.id) return null;
     refreshPricingSettings();
   }, [session?.user?.id, currentRole]);
 
@@ -1663,71 +1668,76 @@ function App() {
 
   async function sendSelectedQuoteToGhl() {
     setGhlMessage("");
-    let quoteId = selectedQuoteId;
-    if (!quoteId) {
-      await saveQuote();
-      quoteId = selectedQuoteId;
-    }
-
-    if (!quoteId) {
-      setGhlMessage("Save the quote first, then send it to GoHighLevel.");
-      return;
-    }
-
     setGhlSending(true);
-    const ghlSettings = pricingOverrides?.ghlSettings || {};
-    const payload = {
-      quoteId,
-      customer: customer,
-      lineItems: buildQuoteLineRows(true),
-      totals: {
-        subtotal: +subtotal.toFixed(2),
-        tax: +salesTax.toFixed(2),
-        permitFee: +permittingFee.toFixed(2),
-        cashPrice: +totalNoFinancing.toFixed(2),
-        financingPrice: +financedSaleAmount.toFixed(2),
-        financedAmount: +financedBase.toFixed(2),
-        monthlyPayment: +monthlyPayment.toFixed(2)
-      },
-      quoteMeta: {
-        tier: selectedTier,
-        financingPlanName: selectedPlan?.label || null,
-        city: settings.city || null,
-        county: settings.county || null,
-        locationId: ghlSettings.locationId || null,
-        pipelineId: ghlSettings.defaultPipelineId || null,
-        opportunityStageId: ghlSettings.defaultOpportunityStageId || null,
-        companyName: ghlSettings.companyName || "S&S Design Build"
-      },
-      ghlMappings: pricingOverrides?.ghlMappings || []
-    };
 
-    const { data, error } = await sendQuoteToGhl(supabase, payload);
-    if (error) {
+    try {
+      let quoteId = selectedQuoteId;
+      if (!quoteId) {
+        quoteId = await saveQuote();
+      }
+
+      if (!quoteId) {
+        setGhlMessage("Save the quote first, then send it to GoHighLevel.");
+        return;
+      }
+
+      const ghlSettings = pricingOverrides?.ghlSettings || {};
+      const payload = {
+        quoteId,
+        customer: customer,
+        lineItems: buildQuoteLineRows(true),
+        totals: {
+          subtotal: +subtotal.toFixed(2),
+          tax: +salesTax.toFixed(2),
+          permitFee: +permittingFee.toFixed(2),
+          cashPrice: +totalNoFinancing.toFixed(2),
+          financingPrice: +financedSaleAmount.toFixed(2),
+          financedAmount: +financedBase.toFixed(2),
+          monthlyPayment: +monthlyPayment.toFixed(2)
+        },
+        quoteMeta: {
+          tier: selectedTier,
+          financingPlanName: selectedPlan?.label || null,
+          city: settings.city || null,
+          county: settings.county || null,
+          locationId: ghlSettings.locationId || null,
+          pipelineId: ghlSettings.defaultPipelineId || null,
+          opportunityStageId: ghlSettings.defaultOpportunityStageId || null,
+          companyName: ghlSettings.companyName || "S&S Design Build"
+        },
+        ghlMappings: pricingOverrides?.ghlMappings || []
+      };
+
+      const { data, error } = await sendQuoteToGhl(supabase, payload);
+      if (error) {
+        setGhlMessage(error);
+        return;
+      }
+
+      const updatePayload = {
+        ghl_contact_id: data?.contactId || null,
+        ghl_estimate_id: data?.estimateId || null,
+        status: data?.estimateId ? "sent" : selectedQuoteStatus
+      };
+
+      const { error: updateError } = await supabase.from("quotes").update(updatePayload).eq("id", quoteId);
+      if (updateError) {
+        setGhlMessage(`Sent to GoHighLevel, but could not store IDs: ${formatSupabaseError(updateError, "unknown error")}`);
+      } else {
+        if (updatePayload.status) setSelectedQuoteStatus(updatePayload.status);
+        await refreshSavedQuotes();
+        setGhlMessage(data?.message || "Quote sent to GoHighLevel.");
+      }
+    } catch (err) {
+      console.error("GoHighLevel send failed", err);
+      setGhlMessage(err?.message || "Failed to send quote to GoHighLevel.");
+    } finally {
       setGhlSending(false);
-      setGhlMessage(error);
-      return;
-    }
-
-    const updatePayload = {
-      ghl_contact_id: data?.contactId || null,
-      ghl_estimate_id: data?.estimateId || null,
-      status: data?.estimateId ? "sent" : selectedQuoteStatus
-    };
-
-    const { error: updateError } = await supabase.from("quotes").update(updatePayload).eq("id", quoteId);
-    setGhlSending(false);
-    if (updateError) {
-      setGhlMessage(`Sent to GoHighLevel, but could not store IDs: ${formatSupabaseError(updateError, "unknown error")}`);
-    } else {
-      if (updatePayload.status) setSelectedQuoteStatus(updatePayload.status);
-      await refreshSavedQuotes();
-      setGhlMessage(data?.message || "Quote sent to GoHighLevel.");
     }
   }
 
   async function saveQuote() {
-    if (!session?.user?.id) return;
+    if (!session?.user?.id) return null;
     setSaveLoading(true);
     setSaveMessage("");
 
@@ -1779,7 +1789,7 @@ function App() {
       console.error("Profile sync before save failed", profileError);
       setSaveLoading(false);
       setSaveMessage(`Could not save quote: ${formatSupabaseError(profileError, "profile sync failed")}`);
-      return;
+      return null;
     }
 
     let quoteId = selectedQuoteId;
@@ -1791,7 +1801,7 @@ function App() {
         console.error("Update quote failed", updateError);
         setSaveLoading(false);
         setSaveMessage(`Could not update quote: ${formatSupabaseError(updateError, "unknown error")}`);
-        return;
+        return null;
       }
       const { error: deleteError } = await supabase.from("quote_lines").delete().eq("quote_id", quoteId);
       if (deleteError) console.error("Delete old quote lines failed", deleteError);
@@ -1801,7 +1811,7 @@ function App() {
         console.error("Save quote failed", insertError);
         setSaveLoading(false);
         setSaveMessage(`Could not save quote: ${formatSupabaseError(insertError, "unknown error")}`);
-        return;
+        return null;
       }
       quoteId = inserted.id;
       setSelectedQuoteId(quoteId);
@@ -1820,6 +1830,7 @@ function App() {
     await refreshSavedQuotes();
     setSaveLoading(false);
     setSaveMessage(`${isUpdating ? "Quote updated." : "Quote saved."}${lineSaveWarning}`);
+    return quoteId;
   }
 
   async function setQuoteStatus(status) {
