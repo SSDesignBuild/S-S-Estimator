@@ -1960,3 +1960,10 @@ button:hover {
     min-width: 0;
   }
 }
+
+
+.financing-toggle.active {
+  border-color: rgba(176, 131, 52, 0.85);
+  background: rgba(176, 131, 52, 0.12);
+  color: var(--text);
+}

@@ -90,6 +90,87 @@ function formatSupabaseError(error, fallback) {
   return error.message || error.details || error.hint || fallback;
 }
 
+function unitMeasurementText(unit) {
+  const normalized = safeString(unit, "").toLowerCase();
+  if (normalized.includes("sqft") || normalized.includes("square")) return "Pricing is measured and billed per square foot.";
+  if (normalized.includes("plf") || normalized.includes("linear")) return "Pricing is measured and billed per linear foot.";
+  if (normalized.includes("each")) return "Pricing is measured and billed per item.";
+  if (normalized.includes("job")) return "Pricing is billed per job.";
+  return "Pricing is measured and billed based on the quoted quantity.";
+}
+
+function buildStandardItemDescription(item) {
+  const name = safeString(item?.name || item?.service_name, "quoted service").trim();
+  const category = safeString(item?.category, "").trim();
+  const unitText = unitMeasurementText(item?.unit);
+  const lowerName = name.toLowerCase();
+
+  if (lowerName === "demolition") {
+    return [
+      "Provide all labor, equipment, and materials for selective demolition per project requirements.",
+      "",
+      "Remove designated structures, finishes, fixtures, and components as outlined in plans.",
+      "",
+      "Protect adjacent areas, surfaces, and existing elements to remain.",
+      "",
+      "Perform work in a controlled, safe, and efficient manner.",
+      "",
+      "Haul off and properly dispose of all debris in accordance with local regulations.",
+      "",
+      "Leave work area clean and prepared for the next phase of construction.",
+      "",
+      "S&S Design Build maintains high standards of safety, quality, and professionalism throughout all demolition activities."
+    ].join("\n");
+  }
+
+  const lines = [
+    `Provide all labor, equipment, and materials for ${name}${category ? ` in the ${category} scope` : ""}.`,
+    "",
+    "Complete fabrication, layout, installation, fastening, and finishing required for a clean, durable result under normal site conditions.",
+    "",
+    "Protect adjacent areas, surfaces, and existing elements to remain.",
+    "",
+    "Perform work in a controlled, safe, and efficient manner in accordance with project requirements and applicable code standards.",
+    "",
+    unitText,
+    "",
+    "S&S Design Build maintains high standards of safety, quality, and professionalism throughout all project work."
+  ];
+
+  return lines.join("\n");
+}
+
+function buildRenaissanceMainDescription(calc) {
+  const width = Number.isFinite(calc?.width) ? calc.width : 0;
+  const projection = Number.isFinite(calc?.projection) ? calc.projection : 0;
+  const section = safeString(calc?.key || "Renaissance patio cover", "Renaissance patio cover");
+  const panelType = safeString(calc?.panelMeta?.label || calc?.panelMeta?.name || calc?.panelMeta?.code || "selected panel package", "selected panel package");
+  const mount = safeString(calc?.mount || "", "");
+  const lines = [
+    `Provide all labor, equipment, and materials for a ${width}' x ${projection}' ${section}${mount ? ` (${mount})` : ""}.`,
+    "",
+    `Includes the base roof system, framing package, and ${panelType} configuration selected for this quote.`,
+    "",
+    "Complete layout, structural attachment, fabrication, fastening, trim, and finish work required for a clean, code-conscious installation under normal site conditions.",
+    "",
+    "Pricing reflects the selected dimensions before any separately listed upgrades or adders shown elsewhere in the estimate.",
+    "",
+    "S&S Design Build maintains high standards of safety, quality, and professionalism throughout all patio cover installations."
+  ];
+  return lines.join("\n");
+}
+
+function buildRenaissanceAdderDescription(label) {
+  const cleanLabel = safeString(label, "Renaissance upgrade").trim();
+  return [
+    `Provide the ${cleanLabel.toLowerCase()} for the quoted Renaissance system as selected.`,
+    "",
+    "Includes labor, materials, adjustment, and installation work required for this upgrade or add-on under normal site conditions.",
+    "",
+    "S&S Design Build maintains high standards of safety, quality, and professionalism throughout all upgrade installations."
+  ].join("\n");
+}
+
 function normalizeGhlMapping(mapping, index = 0) {
   const fallbackServiceKey = String(mapping?.serviceKey || mapping?.service_key || '').trim() || `manual-${index + 1}`;
   const priceIds = mapping?.priceIds || mapping?.price_ids || {};
@@ -290,7 +371,8 @@ const defaultSettings = {
   darkMode: false,
   showCommission: true,
   removePermit: false,
-  showNoFinancingTotal: true
+  showNoFinancingTotal: true,
+  financingCostAdded: false
 };
 
 const defaultCustomer = {
@@ -833,6 +915,7 @@ function App() {
 
   const pricingTiers = useMemo(() => Object.fromEntries(Object.entries(appData.pricingTiers).map(([key, tier]) => [key, { ...tier, multiplier: pricingOverrides.tierMultipliers?.[key] ?? tier.multiplier }])), [pricingOverrides.tierMultipliers]);
   const effectiveAppDefaults = useMemo(() => ({ ...appData.defaultSettings, ...pricingOverrides.appDefaults }), [pricingOverrides.appDefaults]);
+  const financingCostMultiplier = settings.financingCostAdded ? 1.1 : 1;
   const mergedRenaissanceStyles = useMemo(() => buildRenaissanceStylesWithOverrides(appData.renaissance.styles, pricingOverrides.renaissanceTablePercent), [pricingOverrides.renaissanceTablePercent]);
   const renaissanceAddOns = useMemo(() => ({
     ...appData.renaissance.addOns,
@@ -949,11 +1032,12 @@ function App() {
       categories.flatMap((cat) =>
         cat.items.map((item) => {
           const qty = safeNumber(lineQtys[item.id] || 0);
-          const extended = qty * item.basePrice * activeTier.multiplier;
-          return { ...item, category: cat.name, qty, extended, displayPrice: item.basePrice * activeTier.multiplier };
+          const displayPrice = item.basePrice * activeTier.multiplier * financingCostMultiplier;
+          const extended = qty * displayPrice;
+          return { ...item, category: cat.name, qty, extended, displayPrice };
         })
       ),
-    [categories, lineQtys, activeTier.multiplier]
+    [categories, lineQtys, activeTier.multiplier, financingCostMultiplier]
   );
 
   const activeItems = lineItems.filter((item) => item.qty > 0);
@@ -969,7 +1053,7 @@ function App() {
     const framedWidth = Math.max(width - sideOverhang * 2, 0);
     const framedProjection = Math.max(projection - frontOverhang, 0);
     const base = getBaseProjectionPrice(table, width, projection);
-    const tierMultiplier = activeTier.multiplier;
+    const tierMultiplier = activeTier.multiplier * financingCostMultiplier;
     const panelMeta = getPanelTypeMeta(renaissance.panelType, renaissance.upgradeFoam, renaissance.upgrade032);
     const supportBeams = safeNumber(renaissance.supportBeams);
     const effectiveProjection = framedProjection ? +getProjectionSegments(framedProjection, supportBeams).toFixed(2) : 0;
@@ -1060,7 +1144,7 @@ function App() {
       usesProjectedMath: projection > 16 && !!base,
       spanTableDriven: !!(width && projection)
     };
-  }, [renaissance, activeTier.multiplier, mergedRenaissanceStyles, renaissanceAddOns]);
+  }, [renaissance, activeTier.multiplier, financingCostMultiplier, mergedRenaissanceStyles, renaissanceAddOns]);
 
   const standardSubtotal = useMemo(() => lineItems.reduce((sum, item) => sum + item.extended, 0), [lineItems]);
   const subtotal = standardSubtotal + renaissanceCalc.total;
@@ -1073,7 +1157,7 @@ function App() {
   const permittingFee = settings.removePermit ? 0 : effectiveAppDefaults.permittingFee + locationFee;
   const totalNoFinancing = subtotal + salesTax + permittingFee;
   const depositAmount = Math.min(Math.max(safeNumber(settings.depositAmount), 0), totalNoFinancing);
-  const financedSaleAmount = totalNoFinancing * (1 + effectiveAppDefaults.financingMarkup);
+  const financedSaleAmount = settings.financingCostAdded ? totalNoFinancing : totalNoFinancing * (1 + effectiveAppDefaults.financingMarkup);
   const financedBase = Math.max(financedSaleAmount - depositAmount, 0);
   const monthlyPayment = financedBase * (selectedPlan.paymentFactor / 100);
   const commissionRate = selectedTier === "volume" ? 0 : selectedTier === "tier7_5" ? 0.075 : selectedTier === "tier5" ? 0.05 : selectedTier === "tier10" ? 0.10 : 0.15;
@@ -1516,48 +1600,63 @@ function App() {
     setSaveMessage("Quote loaded.");
   }
 
-  function buildQuoteLineRows() {
+  function buildQuoteLineRows(includeDescriptions = false) {
     const rows = activeItems
-      .map((item) => ({
-        service_key: item.id,
-        tier_key: selectedTier,
-        category: item.category || "General",
-        service_name: item.name || "Line item",
-        unit: item.unit || null,
-        quantity: Number.isFinite(+item.qty) ? +item.qty : 0,
-        unit_price: Number.isFinite(item.displayPrice) ? +item.displayPrice.toFixed(2) : 0,
-        line_total: Number.isFinite(item.extended) ? +item.extended.toFixed(2) : 0,
-        source_type: "standard"
-      }))
+      .map((item) => {
+        const row = {
+          service_key: item.id,
+          tier_key: selectedTier,
+          category: item.category || "General",
+          service_name: item.name || "Line item",
+          unit: item.unit || null,
+          quantity: Number.isFinite(+item.qty) ? +item.qty : 0,
+          unit_price: Number.isFinite(item.displayPrice) ? +item.displayPrice.toFixed(2) : 0,
+          line_total: Number.isFinite(item.extended) ? +item.extended.toFixed(2) : 0,
+          source_type: "standard"
+        };
+        if (includeDescriptions) {
+          row.description = buildStandardItemDescription({ ...item, category: row.category, unit: row.unit });
+        }
+        return row;
+      })
       .filter((row) => row.quantity > 0 || row.line_total > 0);
 
-    if (renaissanceCalc.total > 0) {
-      rows.push({
+    if (renaissanceCalc.baseTiered > 0) {
+      const mainRow = {
         service_key: "renaissance-main",
         tier_key: selectedTier,
         category: "Renaissance",
         service_name: `${renaissanceCalc.key} ${renaissanceCalc.width}' x ${renaissanceCalc.projection}'`,
         unit: "Each",
         quantity: 1,
-        unit_price: +renaissanceCalc.total.toFixed(2),
-        line_total: +renaissanceCalc.total.toFixed(2),
+        unit_price: +renaissanceCalc.baseTiered.toFixed(2),
+        line_total: +renaissanceCalc.baseTiered.toFixed(2),
         source_type: "renaissance"
-      });
-      renaissanceCalc.adders.forEach((adder) => {
-        if (!Number.isFinite(adder.amount) || adder.amount <= 0) return;
-        rows.push({
-          service_key: `renaissance-${slugify(adder.label)}`,
-          tier_key: selectedTier,
-          category: "Renaissance",
-          service_name: adder.label,
-          unit: "Each",
-          quantity: 1,
-          unit_price: +adder.amount.toFixed(2),
-          line_total: +adder.amount.toFixed(2),
-          source_type: "renaissance"
-        });
-      });
+      };
+      if (includeDescriptions) {
+        mainRow.description = buildRenaissanceMainDescription({ ...renaissanceCalc, mount: renaissance.mount });
+      }
+      rows.push(mainRow);
     }
+
+    renaissanceCalc.adders.forEach((adder) => {
+      if (!Number.isFinite(adder.amount) || adder.amount <= 0) return;
+      const adderRow = {
+        service_key: `renaissance-${slugify(adder.label)}`,
+        tier_key: selectedTier,
+        category: "Renaissance",
+        service_name: adder.label,
+        unit: "Each",
+        quantity: 1,
+        unit_price: +adder.amount.toFixed(2),
+        line_total: +adder.amount.toFixed(2),
+        source_type: "renaissance"
+      };
+      if (includeDescriptions) {
+        adderRow.description = buildRenaissanceAdderDescription(adder.label);
+      }
+      rows.push(adderRow);
+    });
 
     return rows;
   }
@@ -1580,7 +1679,7 @@ function App() {
     const payload = {
       quoteId,
       customer: customer,
-      lineItems: buildQuoteLineRows(),
+      lineItems: buildQuoteLineRows(true),
       totals: {
         subtotal: +subtotal.toFixed(2),
         tax: +salesTax.toFixed(2),
@@ -2697,6 +2796,13 @@ async function refreshAdminUsers() {
               <div className="section-head compact-head no-margin-bottom">
                 <h3>Financing plan</h3>
               </div>
+              <button
+                className={settings.financingCostAdded ? "ghost-btn financing-toggle active" : "ghost-btn financing-toggle"}
+                onClick={() => setSettings((current) => ({ ...current, financingCostAdded: !current.financingCostAdded }))}
+              >
+                {settings.financingCostAdded ? "Remove Financing Cost" : "Add Financing Cost"}
+              </button>
+              {settings.financingCostAdded ? <p className="small-note">10% financing cost is currently baked into every quoted item.</p> : null}
               <div className="summary-row"><span>Financing Price</span><strong>{currency.format(financedSaleAmount)}</strong></div>
               <label>
                 Deposit / cash down

@@ -12,7 +12,7 @@ function json(body: unknown, status = 200) {
   });
 }
 
-const FUNCTION_VERSION = "v24q-ghl-fixed-item-math";
+const FUNCTION_VERSION = "v24x-financing-and-descriptions";
 const CONTACT_BASE_URL = "https://services.leadconnectorhq.com";
 const ESTIMATE_BASE_URL = "https://backend.leadconnectorhq.com";
 
@@ -69,6 +69,19 @@ function formatYyyyMmDd(date = new Date()) {
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
+}
+function textToHtmlDescription(text: unknown) {
+  const raw = safeString(text, "").trim();
+  if (!raw) return "<p></p>";
+  const blocks = raw.split(/\n\s*\n/).map((block) => block.trim()).filter(Boolean);
+  return blocks.map((block) => {
+    const line = block
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replace(/\n/g, "<br/>");
+    return `<p>${line}</p>`;
+  }).join("");
 }
 
 serve(async (req) => {
@@ -169,7 +182,7 @@ serve(async (req) => {
           taxes: [],
           taxInclusive: false,
           attachments: [],
-          description: safeString(item?.description || item?.category || item?.source_type || "", ""),
+          description: textToHtmlDescription(item?.description || item?.category || item?.source_type || ""),
           currency: safeString(locationObj.currency || quoteMeta.currency || "USD", "USD") || "USD",
           amount,
           qty: qty > 0 ? qty : 1,
