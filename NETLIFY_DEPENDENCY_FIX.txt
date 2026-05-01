@@ -1,0 +1,4 @@
+Dependency install fix:
+- Removed unused ESLint/parser packages from dependencies because Netlify npm v10 rejects eslint@10 with @babel/eslint-parser peer range.
+- Added .npmrc legacy-peer-deps=true as an extra guard if Netlify cache still references older dependency metadata.
+- No Supabase/Edge Function changes are required for this Netlify install failure.
