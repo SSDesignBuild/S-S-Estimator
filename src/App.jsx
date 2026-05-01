@@ -560,11 +560,7 @@ const defaultSettings = {
 const defaultCustomer = {
   name: "",
   email: "",
-  phone: "",
-  address: "",
-  city: "",
-  state: "",
-  zip: ""
+  phone: ""
 };
 
 function roofSqft(mount, width, projection) {
@@ -1865,7 +1861,11 @@ function App() {
       const ghlSettings = pricingOverrides?.ghlSettings || {};
       const payload = {
         quoteId,
-        customer: customer,
+        customer: {
+          name: customer.name,
+          email: customer.email,
+          phone: customer.phone
+        },
         lineItems: buildQuoteLineRows(true),
         totals: {
           subtotal: +subtotal.toFixed(2),
@@ -1881,8 +1881,6 @@ function App() {
           financingPlanName: selectedPlan?.label || null,
           city: settings.city || null,
           county: settings.county || null,
-          state: customer.state || null,
-          postalCode: customer.zip || null,
           taxCategoryId: "6852749d6e0bd39dd76d14b4",
           taxCategoryName: "Services",
           locationId: ghlSettings.locationId || null,
@@ -2942,22 +2940,6 @@ async function refreshAdminUsers() {
               <label>
                 Customer phone
                 <input type="text" value={customer.phone} onChange={(e) => setCustomer((current) => ({ ...current, phone: e.target.value }))} placeholder="(615) 555-1234" />
-              </label>
-              <label>
-                Project address
-                <input type="text" value={customer.address} onChange={(e) => setCustomer((current) => ({ ...current, address: e.target.value }))} placeholder="Street address" />
-              </label>
-              <label>
-                City
-                <input type="text" value={customer.city} onChange={(e) => setCustomer((current) => ({ ...current, city: e.target.value }))} placeholder="City" />
-              </label>
-              <label>
-                State
-                <input type="text" value={customer.state} onChange={(e) => setCustomer((current) => ({ ...current, state: e.target.value.toUpperCase() }))} placeholder="TN" maxLength={2} />
-              </label>
-              <label>
-                ZIP
-                <input type="text" value={customer.zip} onChange={(e) => setCustomer((current) => ({ ...current, zip: e.target.value }))} placeholder="37201" />
               </label>
             </div>
             {saveMessage ? <p className="small-note success-note">{saveMessage}</p> : null}

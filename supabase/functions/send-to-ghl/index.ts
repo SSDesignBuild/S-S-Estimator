@@ -12,7 +12,7 @@ function json(body: unknown, status = 200) {
   });
 }
 
-const FUNCTION_VERSION = "v24x-descriptions-ghl-defaults-taxable";
+const FUNCTION_VERSION = "v24x-ghl-default-terms-no-address-inputs";
 const GHL_SERVICES_TAX_CATEGORY_ID = "6852749d6e0bd39dd76d14b4";
 const CONTACT_BASE_URL = "https://services.leadconnectorhq.com";
 const ESTIMATE_BASE_URL = "https://backend.leadconnectorhq.com";
@@ -83,6 +83,94 @@ function textToHtmlDescription(text: unknown) {
       .replace(/\n/g, "<br/>");
     return `<p>${line}</p>`;
   }).join("");
+}
+
+function getPath(obj: any, path: string) {
+  return path.split(".").reduce((acc, key) => (acc && typeof acc === "object" ? acc[key] : undefined), obj);
+}
+
+function firstStringFromPaths(obj: any, paths: string[]) {
+  for (const path of paths) {
+    const value = getPath(obj, path);
+    const text = safeString(value, "").trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+async function fetchGhlEstimateDefaults(locationId: string, authHeaders: Record<string, string>) {
+  const defaults: Record<string, unknown> = {};
+  const attempts: Array<{ label: string; url: string }> = [
+    {
+      label: "invoice-settings",
+      url: `${ESTIMATE_BASE_URL}/invoices/settings?altId=${encodeURIComponent(locationId)}&altType=location`,
+    },
+    {
+      label: "estimate-templates",
+      url: `${ESTIMATE_BASE_URL}/invoices/estimate/template?altId=${encodeURIComponent(locationId)}&altType=location`,
+    },
+  ];
+
+  for (const attempt of attempts) {
+    try {
+      const res = await fetch(attempt.url, { method: "GET", headers: authHeaders });
+      const body = await readJsonSafe(res);
+      defaults[`${attempt.label}Status`] = res.status;
+      defaults[`${attempt.label}Body`] = body;
+
+      if (!res.ok) continue;
+
+      const data: any = body;
+      const terms = firstStringFromPaths(data, [
+        "estimate.termsNotes",
+        "estimate.termsAndNotes",
+        "estimate.terms",
+        "estimate.notes",
+        "estimateSettings.termsNotes",
+        "estimateSettings.termsAndNotes",
+        "estimateSettings.terms",
+        "settings.estimate.termsNotes",
+        "settings.estimate.termsAndNotes",
+        "settings.estimate.terms",
+        "termsNotes",
+        "termsAndNotes",
+        "terms",
+        "notes",
+      ]);
+      if (terms && !defaults.termsNotes) defaults.termsNotes = terms;
+
+      const title = firstStringFromPaths(data, [
+        "estimate.title",
+        "estimate.name",
+        "estimateSettings.title",
+        "estimateSettings.name",
+        "settings.estimate.title",
+        "settings.estimate.name",
+        "title",
+        "name",
+      ]);
+      if (title && !defaults.title) defaults.title = title;
+
+      const templates = Array.isArray(data?.templates) ? data.templates
+        : Array.isArray(data?.estimateTemplates) ? data.estimateTemplates
+        : Array.isArray(data?.data) ? data.data
+        : Array.isArray(data) ? data
+        : [];
+      const defaultTemplate = templates.find((template: any) => template?.isDefault || template?.default || template?.name === "Default") || templates[0];
+      if (defaultTemplate) {
+        const templateTerms = firstStringFromPaths(defaultTemplate, ["termsNotes", "termsAndNotes", "terms", "notes"]);
+        const templateTitle = firstStringFromPaths(defaultTemplate, ["title", "name"]);
+        if (templateTerms && !defaults.termsNotes) defaults.termsNotes = templateTerms;
+        if (templateTitle && !defaults.title) defaults.title = templateTitle;
+      }
+    } catch (err) {
+      defaults[`${attempt.label}Error`] = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  defaults.title = safeString(defaults.title || Deno.env.get("GHL_DEFAULT_ESTIMATE_TITLE") || "", "").trim();
+  defaults.termsNotes = safeString(defaults.termsNotes || Deno.env.get("GHL_DEFAULT_TERMS_NOTES") || "", "").trim();
+  return defaults;
 }
 
 serve(async (req) => {
@@ -170,6 +258,8 @@ serve(async (req) => {
       "EST-",
     );
 
+    const ghlEstimateDefaults = await fetchGhlEstimateDefaults(locationId, authHeaders);
+
     // 4) Build custom items ONLY from real estimator service rows.
     const customItems = lineItems
       .map((item: any, index: number) => {
@@ -218,7 +308,7 @@ serve(async (req) => {
     const estimateBody: Record<string, unknown> = {
       altId: safeString(locationId, ""),
       altType: "location",
-      name: safeString(quoteMeta.estimateName || quoteMeta.title || "S&S Design Build Estimate", "S&S Design Build Estimate"),
+      name: safeString(quoteMeta.estimateName || quoteMeta.title || ghlEstimateDefaults.title || "S&S Design Build Estimate", "S&S Design Build Estimate"),
       attachments: [],
       autoInvoice: { enabled: false, directPayments: false },
       businessDetails: {
@@ -240,13 +330,6 @@ serve(async (req) => {
         name: customerName,
         email: safeString(customer.email || quoteMeta.customerEmail || "", "") || undefined,
         additionalEmails: [],
-        address: {
-          addressLine1: safeString(customer.address || customer.addressLine1 || "", "") || undefined,
-          city: safeString(customer.city || quoteMeta.city || "", "") || undefined,
-          state: safeString(customer.state || quoteMeta.state || "", "") || undefined,
-          countryCode: safeString(customer.country || "US", "US"),
-          postalCode: safeString(customer.postalCode || customer.zip || customer.zipCode || "", "") || undefined,
-        },
         customFields: [],
       },
       currency,
@@ -265,7 +348,7 @@ serve(async (req) => {
       liveMode: true,
       meta: {},
       opportunityDetails: null,
-      ...(safeString(quoteMeta.termsNotes || "", "").trim() ? { termsNotes: safeString(quoteMeta.termsNotes || "", "") } : {}),
+      ...(safeString(quoteMeta.termsNotes || ghlEstimateDefaults.termsNotes || "", "").trim() ? { termsNotes: safeString(quoteMeta.termsNotes || ghlEstimateDefaults.termsNotes || "", "") } : {}),
     };
 
     console.log(JSON.stringify({
@@ -276,6 +359,7 @@ serve(async (req) => {
       generateJson,
       finalEstimateJson: estimateBody,
       finalItemsJson: customItems,
+      ghlEstimateDefaults,
       usedLocationId: locationId,
       usedContactId: contactId,
     }));
@@ -310,6 +394,7 @@ serve(async (req) => {
       usedVariant: "ghl-fixed-item-math",
       finalEstimateJson: estimateBody,
       finalItemsJson: customItems,
+      ghlEstimateDefaults,
       debug: estimateJson,
     });
   } catch (err) {
