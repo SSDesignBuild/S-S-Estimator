@@ -95,54 +95,216 @@ function safeString(value, fallback = "") {
   return String(value);
 }
 
+
 function unitMeasurementText(unit) {
   const normalized = safeString(unit, "").toLowerCase();
-  if (normalized.includes("sqft") || normalized.includes("square")) return "Pricing is measured and billed per square foot.";
-  if (normalized.includes("plf") || normalized.includes("linear")) return "Pricing is measured and billed per linear foot.";
-  if (normalized.includes("each")) return "Pricing is measured and billed per item.";
-  if (normalized.includes("job")) return "Pricing is billed per job.";
-  return "Pricing is measured and billed based on the quoted quantity.";
+  if (normalized.includes("sqft") || normalized.includes("square")) return "Pricing is measured by square footage based on the quoted layout and selected finish.";
+  if (normalized.includes("plf") || normalized.includes("linear")) return "Pricing is measured by linear footage based on field dimensions and project layout.";
+  if (normalized.includes("step")) return "Pricing is measured per step based on the selected stair configuration.";
+  if (normalized.includes("each")) return "Pricing is measured per item installed.";
+  if (normalized.includes("job")) return "Pricing is billed as a project allowance for the defined scope.";
+  if (normalized.includes("minimum")) return "Pricing reflects the minimum project charge for this scope.";
+  return "Pricing is measured based on the quoted quantity and project-specific conditions.";
+}
+
+function descriptionFromLines(lines) {
+  return lines.filter((line) => line !== null && line !== undefined).map((line) => safeString(line, "").trim()).join("\n");
+}
+
+function categoryIntro(category, name) {
+  const lowerCategory = safeString(category, "").toLowerCase();
+  const lowerName = safeString(name, "").toLowerCase();
+  if (lowerCategory.includes("screen enclosure")) {
+    if (lowerName.includes("kick")) return `Provide and install ${name} to strengthen and finish the lower screen wall area.`;
+    if (lowerName.includes("post")) return `Provide and install ${name} to reinforce or replace structural screen enclosure supports.`;
+    if (lowerName.includes("suntex")) return `Upgrade the screen enclosure with ${name} for enhanced shade, privacy, and solar control.`;
+    return `Provide and install ${name} for the screen enclosure scope.`;
+  }
+  if (lowerCategory.includes("motorized")) return `Provide and install ${name} for controlled shade, privacy, and weather protection at the outdoor opening.`;
+  if (lowerCategory.includes("pca screen doors")) return `Provide and install ${name} as part of the screen door package.`;
+  if (lowerCategory.includes("electrical")) return `Provide electrical labor and materials for ${name}.`;
+  if (lowerCategory.includes("custom extras")) {
+    if (lowerName.includes("demo") || lowerName.includes("tear out")) return "Provide selective tear-out and demolition services required for the project scope.";
+    if (lowerName.includes("gutter")) return `Provide and install ${name} to manage roof runoff and direct water away from the structure.`;
+    if (lowerName.includes("paint") || lowerName.includes("stain")) return `Provide finish preparation and application for ${name}.`;
+    if (lowerName.includes("water") || lowerName.includes("heater")) return `Provide plumbing-related installation for ${name}.`;
+    return `Provide ${name} as an added project scope item.`;
+  }
+  if (lowerCategory.includes("cover my pergola")) return `Provide and install the ${name} over the existing pergola structure to improve shade, rain protection, and day-to-day usability.`;
+  if (lowerCategory.includes("patio covers")) {
+    if (lowerName.includes("flat pan")) return `Provide and install ${name}, including roof panels, supports, fastening, and trim for a clean covered patio installation.`;
+    if (lowerName.includes("insulated cover")) return `Provide and install ${name} to create a more comfortable covered patio with improved heat reduction and weather protection.`;
+    if (lowerName.includes("beam") || lowerName.includes("post") || lowerName.includes("column") || lowerName.includes("gutter")) return `Provide and install ${name} as a structural or finish component of the patio cover system.`;
+    if (lowerName.includes("pergola")) return `Provide and install ${name} to create a defined outdoor living area with architectural shade and visual interest.`;
+    if (lowerName.includes("louvered")) return `Provide and install ${name} for adjustable shade, ventilation, and outdoor comfort.`;
+    if (lowerName.includes("wood")) return `Provide and build ${name} using project-specific framing, attachment, and finish details.`;
+    return `Provide and install ${name} for the patio cover scope.`;
+  }
+  if (lowerCategory.includes("sunrooms")) return `Provide and install ${name} to improve the comfort, enclosure, and year-round usability of the outdoor living space.`;
+  if (lowerCategory.includes("decking")) {
+    if (lowerName.includes("railing")) return `Provide and install ${name} for deck safety, perimeter definition, and finished appearance.`;
+    if (lowerName.includes("stairs")) return `Provide and build ${name} with proper framing, tread layout, and secure attachment.`;
+    if (lowerName.includes("underdeck")) return `Provide and install ${name} to create a cleaner, more usable dry area beneath the deck.`;
+    if (lowerName.includes("lights")) return `Provide and install ${name} to enhance deck visibility, safety, and evening use.`;
+    if (lowerName.includes("ceiling")) return `Provide and install ${name} for a finished ceiling appearance in the covered outdoor area.`;
+    return `Provide and install ${name} for the deck construction scope.`;
+  }
+  if (lowerCategory.includes("outdoor living")) {
+    if (lowerName.includes("concrete")) return `Provide and install ${name} for the patio or outdoor living surface.`;
+    if (lowerName.includes("paver")) return `Provide and install ${name} with proper base preparation, layout, and edge restraint.`;
+    if (lowerName.includes("fire")) return `Provide and install ${name} as a focal point for the outdoor living area.`;
+    if (lowerName.includes("kitchen")) return `Provide and build ${name} for the outdoor cooking and entertainment area.`;
+    if (lowerName.includes("stone") || lowerName.includes("veneer") || lowerName.includes("column")) return `Provide and install ${name} to add durable masonry detail and visual finish to the outdoor space.`;
+    if (lowerName.includes("retaining wall")) return `Provide and install ${name} to support grade changes and define the outdoor living area.`;
+    if (lowerName.includes("engineering")) return `Provide engineering coordination and documentation for ${name}.`;
+    if (lowerName.includes("permitting")) return "Provide permitting coordination for the project scope.";
+    return `Provide and install ${name} for the outdoor living scope.`;
+  }
+  return `Provide all labor, equipment, and materials for ${name}.`;
+}
+
+function detailLinesForItem(item) {
+  const name = safeString(item?.name || item?.service_name, "quoted service").trim();
+  const category = safeString(item?.category, "").trim();
+  const lowerCategory = category.toLowerCase();
+  const lowerName = name.toLowerCase();
+  if (lowerName === "demolition" || lowerName.includes("tear out") || lowerName.includes("demo")) return [
+    "Remove designated structures, finishes, fixtures, and components as outlined in the approved scope.",
+    "Protect adjacent areas, surfaces, landscaping, and existing elements scheduled to remain.",
+    "Haul off and properly dispose of debris in accordance with local regulations.",
+    "Leave the work area clean, safe, and prepared for the next phase of construction."
+  ];
+  if (lowerCategory.includes("screen enclosure")) return [
+    "Lay out framing and screen openings to align with the existing structure and approved dimensions.",
+    "Install aluminum framing, screen material, kick panels, rail components, or related enclosure parts as applicable to this item.",
+    "Secure all components with appropriate fasteners and finish details for a clean, durable enclosure.",
+    "Verify fit, alignment, operation, and appearance before final cleanup."
+  ];
+  if (lowerCategory.includes("motorized")) return [
+    "Install tracks, housing, motorized screen or vinyl assembly, controls, and required fastening components.",
+    "Coordinate power and controls so the unit operates smoothly within the designed opening.",
+    "Adjust travel limits, tension, and alignment for reliable daily use.",
+    "Confirm operation with the customer-facing controls before final cleanup."
+  ];
+  if (lowerCategory.includes("pca screen doors")) return [
+    "Install door frame, hinges, hardware, screen panel, and accessory components selected for the opening.",
+    "Adjust swing, latch, reveal, and closure for proper operation.",
+    "Seal and finish the door installation to integrate with the surrounding screen enclosure.",
+    "Confirm smooth operation and leave the opening clean and ready for use."
+  ];
+  if (lowerCategory.includes("electrical")) return [
+    "Route wiring, boxes, devices, and connections required for the selected electrical scope.",
+    "Install outlets, switches, lighting, fan wiring, GFCI protection, or dedicated circuits as applicable to this item.",
+    "Perform work in accordance with applicable electrical code requirements and safe installation practices.",
+    "Test operation and leave devices labeled, secure, and ready for customer use."
+  ];
+  if (lowerCategory.includes("cover my pergola")) return [
+    "Review the existing pergola layout and install the selected cover system to fit the structure.",
+    "Attach panels, trim, fasteners, and water-management details per manufacturer recommendations.",
+    "Improve usability of the space by helping reduce direct sun and rain exposure.",
+    "Clean the installation area and confirm the finished system is secure and aligned."
+  ];
+  if (lowerCategory.includes("patio covers")) return [
+    "Lay out posts, beams, panels, gutters, and attachment points based on the approved patio cover design.",
+    "Install structural and finish components using appropriate fastening, flashing, and trim methods.",
+    "Coordinate slope, drainage, and finished appearance so the cover integrates cleanly with the home.",
+    "Verify alignment, attachment, and cleanup before turning the area over for use."
+  ];
+  if (lowerCategory.includes("sunrooms")) return [
+    "Install wall, window, panel, door, kick panel, or transom components selected for the sunroom system.",
+    "Coordinate openings, seals, tracks, and transitions for a clean enclosure installation.",
+    "Improve comfort and usability by helping protect the space from wind, insects, and changing weather conditions.",
+    "Check fit, operation, and finish quality before final cleanup."
+  ];
+  if (lowerCategory.includes("decking")) return [
+    "Prepare framing, layout, attachment points, and transitions for the selected deck component.",
+    "Install decking, railing, stairs, skirting, lighting, underdecking, ceiling, or accessory materials as applicable to this item.",
+    "Use proper fastening, spacing, blocking, and finish details for long-term performance and a clean appearance.",
+    "Confirm the work area is safe, secure, and ready for use."
+  ];
+  if (lowerCategory.includes("outdoor living")) {
+    if (lowerName.includes("concrete")) return [
+      "Prepare the area with grading, forming, base work, reinforcement, and layout as required by site conditions.",
+      "Place and finish concrete to the selected surface style, slope, and project dimensions.",
+      "Coordinate color, stamped finish, borders, steps, raised sides, or pumping requirements when included in the quoted scope.",
+      "Clean the surrounding area and prepare the surface for curing and normal use."
+    ];
+    if (lowerName.includes("paver")) return [
+      "Excavate and prepare the paver area with appropriate base material, compaction, leveling, and drainage consideration.",
+      "Install pavers, borders, cuts, restraints, and inlay details according to the approved layout.",
+      "Sweep and finish joints for a stable, attractive patio surface.",
+      "Leave the area clean and ready for outdoor living use."
+    ];
+    return [
+      "Prepare the work area, layout, base, framing, masonry, or utility coordination required for this outdoor living feature.",
+      "Install the selected feature with attention to durability, proportion, drainage, finish quality, and usability.",
+      "Coordinate finishes with the surrounding patio, deck, cover, or landscape elements for a cohesive result.",
+      "Clean the work area and confirm the feature is ready for the next phase or final use."
+    ];
+  }
+  if (lowerCategory.includes("custom extras")) return [
+    "Coordinate this added scope with the main project so it integrates cleanly with the surrounding work.",
+    "Provide materials, labor, layout, installation, and finish details appropriate for the selected item.",
+    "Protect adjacent surfaces and maintain a clean, organized work area.",
+    "Confirm the added scope is complete and ready for the next phase of construction."
+  ];
+  return [
+    "Complete layout, installation, fastening, and finishing required for a clean, durable result under normal site conditions.",
+    "Protect adjacent areas, surfaces, landscaping, and existing elements to remain.",
+    "Coordinate this scope with the surrounding project work for a complete and professional installation.",
+    "Leave the work area clean and prepared for the next phase of construction."
+  ];
 }
 
 function buildStandardItemDescription(item) {
   const name = safeString(item?.name || item?.service_name, "quoted service").trim();
   const category = safeString(item?.category, "").trim();
   const unitText = unitMeasurementText(item?.unit);
-  const lowerName = name.toLowerCase();
-
-  if (lowerName === "demolition") {
-    return [
-      "Provide all labor, equipment, and materials for selective demolition per project requirements.",
-      "",
-      "Remove designated structures, finishes, fixtures, and components as outlined in plans.",
-      "",
-      "Protect adjacent areas, surfaces, and existing elements to remain.",
-      "",
-      "Perform work in a controlled, safe, and efficient manner.",
-      "",
-      "Haul off and properly dispose of all debris in accordance with local regulations.",
-      "",
-      "Leave work area clean and prepared for the next phase of construction.",
-      "",
-      "S&S Design Build maintains high standards of safety, quality, and professionalism throughout all demolition activities."
-    ].join("\n");
-  }
-
-  const lines = [
-    `Provide all labor, equipment, and materials for ${name}${category ? ` in the ${category} scope` : ""}.`,
+  const details = detailLinesForItem(item);
+  return descriptionFromLines([
+    categoryIntro(category, name),
     "",
-    "Complete fabrication, layout, installation, fastening, and finishing required for a clean, durable result under normal site conditions.",
-    "",
-    "Protect adjacent areas, surfaces, and existing elements to remain.",
-    "",
-    "Perform work in a controlled, safe, and efficient manner in accordance with project requirements and applicable code standards.",
-    "",
+    ...details.flatMap((line) => [line, ""]),
     unitText,
     "",
-    "S&S Design Build maintains high standards of safety, quality, and professionalism throughout all project work."
-  ];
+    "S&S Design Build maintains high standards of safety, quality, craftsmanship, and professionalism throughout this scope of work."
+  ]);
+}
 
-  return lines.join("\n");
+function renaissanceModelDescription(modelName) {
+  const lower = safeString(modelName, "").toLowerCase();
+  if (lower.includes("classico")) return {
+    headline: "a Renaissance Classico insulated aluminum patio roof system with the exposed-beam, pergola-inspired look of full trusses beneath the roof panels",
+    details: [
+      "Includes the selected roof panels, sculpted posts, header, decorative post covers, truss components, trim, and finish details for the quoted configuration.",
+      "Designed to deliver the look and feel of a traditional wood-framed patio cover while retaining the low-maintenance benefits of powder-coated aluminum.",
+      "Coordinate attachment, layout, slope, drainage, fastening, and finish work for a clean, durable outdoor living structure."
+    ]
+  };
+  if (lower.includes("contempo")) return {
+    headline: "a Renaissance Contempo insulated aluminum patio roof system with decorative truss ends and a traditional wood-framed appearance",
+    details: [
+      "Includes the selected roof panels, sculpted posts, header, decorative post covers, truss-end detailing, gutter components, trim, and finish pieces for the quoted configuration.",
+      "Provides the strength and low-maintenance benefits of aluminum while adding decorative architectural character to the patio area.",
+      "Coordinate attachment, layout, slope, drainage, fastening, and finish work for a clean, durable outdoor living structure."
+    ]
+  };
+  if (lower.includes("moderno")) return {
+    headline: "a Renaissance Moderno insulated aluminum solid roof patio cover with clean modern lines, decorative posts, post covers, and architectural gutter details",
+    details: [
+      "Includes the selected insulated roof panels, framing, posts, header, gutter system, trim, and finish components for the quoted configuration.",
+      "Designed to help protect the patio from harsh sun and driving rain while providing a cost-effective, low-maintenance covered outdoor space.",
+      "Coordinate attachment, layout, slope, drainage, fastening, and finish work for a clean, durable outdoor living structure."
+    ]
+  };
+  return {
+    headline: "a Renaissance patio cover system selected for this project",
+    details: [
+      "Includes the selected roof system, framing, posts, gutters, trim, and finish components for the quoted configuration.",
+      "Designed for durable outdoor performance, low maintenance, and improved comfort beneath the covered patio area.",
+      "Coordinate attachment, layout, slope, drainage, fastening, and finish work for a clean, durable outdoor living structure."
+    ]
+  };
 }
 
 function buildRenaissanceMainDescription(calc) {
@@ -151,29 +313,44 @@ function buildRenaissanceMainDescription(calc) {
   const section = safeString(calc?.key || "Renaissance patio cover", "Renaissance patio cover");
   const panelType = safeString(calc?.panelMeta?.label || calc?.panelMeta?.name || calc?.panelMeta?.code || "selected panel package", "selected panel package");
   const mount = safeString(calc?.mount || "", "");
-  const lines = [
-    `Provide all labor, equipment, and materials for a ${width}' x ${projection}' ${section}${mount ? ` (${mount})` : ""}.`,
+  const model = renaissanceModelDescription(section);
+  return descriptionFromLines([
+    `Provide all labor, equipment, and materials to furnish and install ${width}' x ${projection}' ${model.headline}${mount ? ` (${mount})` : ""}.`,
     "",
-    `Includes the base roof system, framing package, and ${panelType} configuration selected for this quote.`,
+    `Panel / package selection: ${panelType}.`,
     "",
-    "Complete layout, structural attachment, fabrication, fastening, trim, and finish work required for a clean, code-conscious installation under normal site conditions.",
+    ...model.details.flatMap((line) => [line, ""]),
+    "Pricing reflects the selected Renaissance base system only; separately selected upgrades and adders are listed as their own line items so the estimate breakdown is clear.",
     "",
-    "Pricing reflects the selected dimensions before any separately listed upgrades or adders shown elsewhere in the estimate.",
-    "",
-    "S&S Design Build maintains high standards of safety, quality, and professionalism throughout all patio cover installations."
-  ];
-  return lines.join("\n");
+    "S&S Design Build maintains high standards of safety, quality, craftsmanship, and professionalism throughout all Renaissance patio cover installations."
+  ]);
 }
 
 function buildRenaissanceAdderDescription(label) {
   const cleanLabel = safeString(label, "Renaissance upgrade").trim();
-  return [
-    `Provide the ${cleanLabel.toLowerCase()} for the quoted Renaissance system as selected.`,
-    "",
-    "Includes labor, materials, adjustment, and installation work required for this upgrade or add-on under normal site conditions.",
-    "",
-    "S&S Design Build maintains high standards of safety, quality, and professionalism throughout all upgrade installations."
-  ].join("\n");
+  const lower = cleanLabel.toLowerCase();
+  const lines = [`Provide and install ${cleanLabel} for the quoted Renaissance patio cover system.`];
+  if (lower.includes("fan") || lower.includes("beam")) {
+    lines.push("Includes the additional structural or mounting support required to better accommodate the selected fan or fixture location.");
+    lines.push("Coordinate placement with the patio cover layout for a clean appearance and practical use.");
+  } else if (lower.includes("gutter") || lower.includes("downspout")) {
+    lines.push("Includes water-management components needed to direct roof runoff away from the covered patio area.");
+    lines.push("Coordinate placement and finish with the Renaissance roof and surrounding structure.");
+  } else if (lower.includes("post") || lower.includes("column")) {
+    lines.push("Includes the selected post, column, or support upgrade for the quoted layout and finish style.");
+    lines.push("Coordinate alignment, anchoring, and trim for a finished architectural appearance.");
+  } else if (lower.includes("screen")) {
+    lines.push("Includes screen-related components selected to improve comfort, insect protection, privacy, or enclosure performance.");
+    lines.push("Coordinate the upgrade with the Renaissance framing and openings for a clean integrated finish.");
+  } else if (lower.includes("light") || lower.includes("electrical")) {
+    lines.push("Includes coordination for the selected lighting or electrical upgrade as it relates to the Renaissance cover layout.");
+    lines.push("Install components neatly and confirm operation where included in the quoted scope.");
+  } else {
+    lines.push("Includes materials, labor, adjustment, and installation work required for this selected upgrade under normal site conditions.");
+    lines.push("Coordinate the upgrade with the base Renaissance system so the final installation is clean, durable, and cohesive.");
+  }
+  lines.push("S&S Design Build maintains high standards of safety, quality, craftsmanship, and professionalism throughout all Renaissance upgrade installations.");
+  return descriptionFromLines(lines.flatMap((line, index) => index === lines.length - 1 ? ["", line] : [line, ""]));
 }
 
 function normalizeGhlMapping(mapping, index = 0) {
@@ -383,7 +560,11 @@ const defaultSettings = {
 const defaultCustomer = {
   name: "",
   email: "",
-  phone: ""
+  phone: "",
+  address: "",
+  city: "",
+  state: "",
+  zip: ""
 };
 
 function roofSqft(mount, width, projection) {
@@ -1700,6 +1881,10 @@ function App() {
           financingPlanName: selectedPlan?.label || null,
           city: settings.city || null,
           county: settings.county || null,
+          state: customer.state || null,
+          postalCode: customer.zip || null,
+          taxCategoryId: "6852749d6e0bd39dd76d14b4",
+          taxCategoryName: "Services",
           locationId: ghlSettings.locationId || null,
           pipelineId: ghlSettings.defaultPipelineId || null,
           opportunityStageId: ghlSettings.defaultOpportunityStageId || null,
@@ -2757,6 +2942,22 @@ async function refreshAdminUsers() {
               <label>
                 Customer phone
                 <input type="text" value={customer.phone} onChange={(e) => setCustomer((current) => ({ ...current, phone: e.target.value }))} placeholder="(615) 555-1234" />
+              </label>
+              <label>
+                Project address
+                <input type="text" value={customer.address} onChange={(e) => setCustomer((current) => ({ ...current, address: e.target.value }))} placeholder="Street address" />
+              </label>
+              <label>
+                City
+                <input type="text" value={customer.city} onChange={(e) => setCustomer((current) => ({ ...current, city: e.target.value }))} placeholder="City" />
+              </label>
+              <label>
+                State
+                <input type="text" value={customer.state} onChange={(e) => setCustomer((current) => ({ ...current, state: e.target.value.toUpperCase() }))} placeholder="TN" maxLength={2} />
+              </label>
+              <label>
+                ZIP
+                <input type="text" value={customer.zip} onChange={(e) => setCustomer((current) => ({ ...current, zip: e.target.value }))} placeholder="37201" />
               </label>
             </div>
             {saveMessage ? <p className="small-note success-note">{saveMessage}</p> : null}

@@ -12,7 +12,8 @@ function json(body: unknown, status = 200) {
   });
 }
 
-const FUNCTION_VERSION = "v24x-financing-and-descriptions";
+const FUNCTION_VERSION = "v24x-descriptions-ghl-defaults-taxable";
+const GHL_SERVICES_TAX_CATEGORY_ID = "6852749d6e0bd39dd76d14b4";
 const CONTACT_BASE_URL = "https://services.leadconnectorhq.com";
 const ESTIMATE_BASE_URL = "https://backend.leadconnectorhq.com";
 
@@ -179,8 +180,14 @@ serve(async (req) => {
         // HighLevel expects amount to be the per-unit price, not the extended line total.
         const amount = unitPrice > 0 ? unitPrice : (qty > 0 ? lineTotal / qty : lineTotal);
         return {
-          taxes: [],
+          // Do not send an empty taxes array. In HighLevel, manually configured taxes are selected in the estimate UI,
+          // while automatic taxes require a tax category/default tax category and valid customer address details.
+          // Mark every estimator item as taxable and provide the Services category so existing GHL tax settings can apply.
           taxInclusive: false,
+          taxable: true,
+          isTaxable: true,
+          taxCategoryId: safeString(item?.taxCategoryId || quoteMeta.taxCategoryId || GHL_SERVICES_TAX_CATEGORY_ID, GHL_SERVICES_TAX_CATEGORY_ID),
+          taxCategoryName: safeString(item?.taxCategoryName || quoteMeta.taxCategoryName || "Services", "Services"),
           attachments: [],
           description: textToHtmlDescription(item?.description || item?.category || item?.source_type || ""),
           currency: safeString(locationObj.currency || quoteMeta.currency || "USD", "USD") || "USD",
@@ -211,8 +218,7 @@ serve(async (req) => {
     const estimateBody: Record<string, unknown> = {
       altId: safeString(locationId, ""),
       altType: "location",
-      name: "New Estimate",
-      title: "ESTIMATE",
+      name: safeString(quoteMeta.estimateName || quoteMeta.title || "S&S Design Build Estimate", "S&S Design Build Estimate"),
       attachments: [],
       autoInvoice: { enabled: false, directPayments: false },
       businessDetails: {
@@ -235,7 +241,11 @@ serve(async (req) => {
         email: safeString(customer.email || quoteMeta.customerEmail || "", "") || undefined,
         additionalEmails: [],
         address: {
+          addressLine1: safeString(customer.address || customer.addressLine1 || "", "") || undefined,
+          city: safeString(customer.city || quoteMeta.city || "", "") || undefined,
+          state: safeString(customer.state || quoteMeta.state || "", "") || undefined,
           countryCode: safeString(customer.country || "US", "US"),
+          postalCode: safeString(customer.postalCode || customer.zip || customer.zipCode || "", "") || undefined,
         },
         customFields: [],
       },
@@ -255,7 +265,7 @@ serve(async (req) => {
       liveMode: true,
       meta: {},
       opportunityDetails: null,
-      termsNotes: safeString(quoteMeta.termsNotes || "", ""),
+      ...(safeString(quoteMeta.termsNotes || "", "").trim() ? { termsNotes: safeString(quoteMeta.termsNotes || "", "") } : {}),
     };
 
     console.log(JSON.stringify({
