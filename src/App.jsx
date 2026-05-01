@@ -1289,7 +1289,7 @@ function App() {
   }
 
   async function refreshPricingSettings() {
-    if (!session?.user?.id) return null;
+    if (!session?.user?.id) return;
     setPricingLoading(true);
     setPricingMessage("");
 
@@ -1507,7 +1507,7 @@ function App() {
 
 
   useEffect(() => {
-    if (!session?.user?.id) return null;
+    if (!session?.user?.id) return;
     refreshPricingSettings();
   }, [session?.user?.id, currentRole]);
 
