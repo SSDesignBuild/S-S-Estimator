@@ -12,7 +12,7 @@ function json(body: unknown, status = 200) {
   });
 }
 
-const FUNCTION_VERSION = "v24x-ghl-default-terms-no-address-inputs";
+const FUNCTION_VERSION = "v24x-ghl-title-required-terms-preserved";
 const GHL_SERVICES_TAX_CATEGORY_ID = "6852749d6e0bd39dd76d14b4";
 const CONTACT_BASE_URL = "https://services.leadconnectorhq.com";
 const ESTIMATE_BASE_URL = "https://backend.leadconnectorhq.com";
@@ -168,7 +168,7 @@ async function fetchGhlEstimateDefaults(locationId: string, authHeaders: Record<
     }
   }
 
-  defaults.title = safeString(defaults.title || Deno.env.get("GHL_DEFAULT_ESTIMATE_TITLE") || "", "").trim();
+  defaults.title = safeString(defaults.title || Deno.env.get("GHL_DEFAULT_ESTIMATE_TITLE") || "S&S Design Build Estimate", "S&S Design Build Estimate").trim();
   defaults.termsNotes = safeString(defaults.termsNotes || Deno.env.get("GHL_DEFAULT_TERMS_NOTES") || "", "").trim();
   return defaults;
 }
@@ -305,10 +305,19 @@ serve(async (req) => {
     const e164Phone = toE164(customer.phone) || toE164(locationObj.phone) || "+16155495309";
     const currency = safeString(locationObj.currency || quoteMeta.currency || "USD", "USD") || "USD";
 
+    const estimateTitle = safeString(
+      quoteMeta.estimateName || quoteMeta.title || ghlEstimateDefaults.title || "S&S Design Build Estimate",
+      "S&S Design Build Estimate",
+    ).trim() || "S&S Design Build Estimate";
+    const termsNotes = safeString(quoteMeta.termsNotes || ghlEstimateDefaults.termsNotes || "", "").trim();
+
     const estimateBody: Record<string, unknown> = {
       altId: safeString(locationId, ""),
       altType: "location",
-      name: safeString(quoteMeta.estimateName || quoteMeta.title || ghlEstimateDefaults.title || "S&S Design Build Estimate", "S&S Design Build Estimate"),
+      // HighLevel's backend requires title on API-created estimates.
+      // The manual New Estimate screen fills this in client-side before saving; the API does not.
+      title: estimateTitle,
+      name: estimateTitle,
       attachments: [],
       autoInvoice: { enabled: false, directPayments: false },
       businessDetails: {
@@ -348,7 +357,10 @@ serve(async (req) => {
       liveMode: true,
       meta: {},
       opportunityDetails: null,
-      ...(safeString(quoteMeta.termsNotes || ghlEstimateDefaults.termsNotes || "", "").trim() ? { termsNotes: safeString(quoteMeta.termsNotes || ghlEstimateDefaults.termsNotes || "", "") } : {}),
+      ...(termsNotes ? {
+        termsNotes,
+        termsAndNotes: termsNotes,
+      } : {}),
     };
 
     console.log(JSON.stringify({
