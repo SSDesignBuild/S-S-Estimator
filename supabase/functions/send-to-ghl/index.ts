@@ -12,7 +12,7 @@ function json(body: unknown, status = 200) {
   });
 }
 
-const FUNCTION_VERSION = "v24x-title-forced-before-ghl-create-20260506";
+const FUNCTION_VERSION = "v24x-ghl-terms-recursive-descriptions-20260506";
 const GHL_SERVICES_TAX_CATEGORY_ID = "6852749d6e0bd39dd76d14b4";
 const CONTACT_BASE_URL = "https://services.leadconnectorhq.com";
 const ESTIMATE_BASE_URL = "https://backend.leadconnectorhq.com";
@@ -98,15 +98,86 @@ function firstStringFromPaths(obj: any, paths: string[]) {
   return "";
 }
 
+
+function stripHtmlToText(value: unknown) {
+  return safeString(value, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .trim();
+}
+
+function findLikelyTermsDeep(obj: any): string {
+  const seen = new Set<any>();
+  let best = "";
+
+  function score(keyPath: string, value: string) {
+    const path = keyPath.toLowerCase();
+    const text = stripHtmlToText(value);
+    if (!text || text.length < 10) return 0;
+    let points = 0;
+    if (path.includes("estimate")) points += 12;
+    if (path.includes("term")) points += 20;
+    if (path.includes("note")) points += 8;
+    if (path.includes("condition")) points += 16;
+    if (path.includes("invoice")) points += 4;
+    if (/terms|conditions|deposit|payment|acceptance|proposal|change order|warranty|invoice/i.test(text)) points += 12;
+    if (text.length > 40) points += 6;
+    if (text.length > 120) points += 6;
+    return points;
+  }
+
+  function walk(value: any, keyPath = "") {
+    if (!value || best) {
+      // keep walking until a strong hit is found; best is only set for strong matches below
+    }
+    if (value && typeof value === "object") {
+      if (seen.has(value)) return;
+      seen.add(value);
+      if (Array.isArray(value)) {
+        value.forEach((entry, index) => walk(entry, `${keyPath}[${index}]`));
+      } else {
+        for (const [key, child] of Object.entries(value)) {
+          walk(child, keyPath ? `${keyPath}.${key}` : key);
+        }
+      }
+      return;
+    }
+    if (typeof value !== "string") return;
+    const points = score(keyPath, value);
+    if (points >= 32) {
+      const clean = safeString(value, "").trim();
+      if (!best || clean.length > best.length) best = clean;
+    }
+  }
+
+  walk(obj);
+  return best;
+}
+
 async function fetchGhlEstimateDefaults(locationId: string, authHeaders: Record<string, string>) {
   const defaults: Record<string, unknown> = {};
   const attempts: Array<{ label: string; url: string }> = [
     {
-      label: "invoice-settings",
+      label: "invoice-settings-services",
+      url: `${CONTACT_BASE_URL}/invoices/settings?altId=${encodeURIComponent(locationId)}&altType=location`,
+    },
+    {
+      label: "invoice-settings-backend",
       url: `${ESTIMATE_BASE_URL}/invoices/settings?altId=${encodeURIComponent(locationId)}&altType=location`,
     },
     {
-      label: "estimate-templates",
+      label: "invoice-settings-services-location",
+      url: `${CONTACT_BASE_URL}/invoices/settings?locationId=${encodeURIComponent(locationId)}`,
+    },
+    {
+      label: "estimate-templates-services",
+      url: `${CONTACT_BASE_URL}/invoices/estimate/template?altId=${encodeURIComponent(locationId)}&altType=location`,
+    },
+    {
+      label: "estimate-templates-backend",
       url: `${ESTIMATE_BASE_URL}/invoices/estimate/template?altId=${encodeURIComponent(locationId)}&altType=location`,
     },
   ];
@@ -137,7 +208,9 @@ async function fetchGhlEstimateDefaults(locationId: string, authHeaders: Record<
         "terms",
         "notes",
       ]);
+      const deepTerms = findLikelyTermsDeep(data);
       if (terms && !defaults.termsNotes) defaults.termsNotes = terms;
+      if (deepTerms && !defaults.termsNotes) defaults.termsNotes = deepTerms;
 
       const title = firstStringFromPaths(data, [
         "estimate.title",
@@ -355,6 +428,7 @@ serve(async (req) => {
       issueDate: formatYyyyMmDd(today),
       items: customItems,
       liveMode: true,
+      automaticTaxesEnabled: true,
       meta: {},
       opportunityDetails: null,
       ...(termsNotes ? {

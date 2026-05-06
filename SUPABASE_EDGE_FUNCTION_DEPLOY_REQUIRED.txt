@@ -1,16 +1,15 @@
-IMPORTANT: This ZIP fixes the frontend and includes the corrected Supabase Edge Function, but Netlify deploys ONLY the web app.
-
-Your current error shows Supabase is still running the old function version:
-v24x-ghl-default-terms-no-address-inputs
-
-That old deployed Edge Function does not send the required `title` field to GoHighLevel, so GHL returns:
-estimates validation failed: title: Path `title` is required.
-
-After copying this ZIP into your repo, also redeploy the Supabase Edge Function:
+Deploy this Supabase Edge Function after uploading the site files:
 
 npx supabase functions deploy send-to-ghl --use-api --no-verify-jwt
 
-Then test Send to GoHighLevel again.
+Function version included in this package:
+v24x-ghl-terms-recursive-descriptions-20260506
 
-The corrected function version should show as:
-v24x-title-forced-before-ghl-create-20260506
+Changes:
+- Sends a required title while preserving/fetching terms from GHL invoice/estimate settings.
+- Fetches invoice settings from both LeadConnector services and backend endpoints.
+- Recursively searches the settings/template response for saved estimate terms/conditions fields.
+- Leaves customer address inputs out of the app.
+- Marks every sent line item taxable and enables automaticTaxesEnabled.
+- Replaces generic descriptions with shorter, item/category-specific bullet descriptions.
+- Notes that customer supplies light/fan fixtures; S&S installs them.
