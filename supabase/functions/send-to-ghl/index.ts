@@ -12,7 +12,7 @@ function json(body: unknown, status = 200) {
   });
 }
 
-const FUNCTION_VERSION = "v24x-ghl-title-required-terms-preserved";
+const FUNCTION_VERSION = "v24x-title-forced-before-ghl-create-20260506";
 const GHL_SERVICES_TAX_CATEGORY_ID = "6852749d6e0bd39dd76d14b4";
 const CONTACT_BASE_URL = "https://services.leadconnectorhq.com";
 const ESTIMATE_BASE_URL = "https://backend.leadconnectorhq.com";
@@ -375,6 +375,11 @@ serve(async (req) => {
       usedLocationId: locationId,
       usedContactId: contactId,
     }));
+
+    // Final guard: GoHighLevel rejects API-created estimates unless title is present.
+    // Keep this immediately before the POST so no later object spread/removal can omit it.
+    estimateBody.title = safeString(estimateBody.title || estimateBody.name || quoteMeta.estimateName || quoteMeta.title || "S&S Design Build Estimate", "S&S Design Build Estimate").trim() || "S&S Design Build Estimate";
+    estimateBody.name = safeString(estimateBody.name || estimateBody.title || "S&S Design Build Estimate", "S&S Design Build Estimate").trim() || "S&S Design Build Estimate";
 
     const estimateRes = await fetch(`${ESTIMATE_BASE_URL}/invoices/estimate/`, {
       method: "POST",

@@ -1877,6 +1877,8 @@ function App() {
           monthlyPayment: +monthlyPayment.toFixed(2)
         },
         quoteMeta: {
+          title: customer.name ? `S&S Design Build Estimate - ${customer.name}` : "S&S Design Build Estimate",
+          estimateName: customer.name ? `S&S Design Build Estimate - ${customer.name}` : "S&S Design Build Estimate",
           tier: selectedTier,
           financingPlanName: selectedPlan?.label || null,
           city: settings.city || null,
