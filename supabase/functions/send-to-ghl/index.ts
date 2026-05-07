@@ -12,7 +12,7 @@ function json(body: unknown, status = 200) {
   });
 }
 
-const FUNCTION_VERSION = "v24x-ghl-issue-date-default-20260506";
+const FUNCTION_VERSION = "v24x-ghl-central-issue-date-20260506";
 const GHL_SERVICES_TAX_CATEGORY_ID = "6852749d6e0bd39dd76d14b4";
 const CONTACT_BASE_URL = "https://services.leadconnectorhq.com";
 const ESTIMATE_BASE_URL = "https://backend.leadconnectorhq.com";
@@ -69,6 +69,22 @@ function formatYyyyMmDd(date = new Date()) {
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function formatYyyyMmDdInTimeZone(date = new Date(), timeZone = "America/Chicago") {
+  // GoHighLevel rejects an issueDate that is ahead of the location/account timezone.
+  // The Edge Function runs in UTC, so using getFullYear/getMonth/getDate can become
+  // tomorrow in GHL during evening hours. Format explicitly in Central Time for S&S.
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const yyyy = parts.find((part) => part.type === "year")?.value || String(date.getUTCFullYear());
+  const mm = parts.find((part) => part.type === "month")?.value || String(date.getUTCMonth() + 1).padStart(2, "0");
+  const dd = parts.find((part) => part.type === "day")?.value || String(date.getUTCDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
 }
 function textToHtmlDescription(text: unknown) {
@@ -422,12 +438,10 @@ serve(async (req) => {
       ...(estimateNumber > 0 ? { estimateNumber } : {}),
       estimateNumberPrefix,
       expiryDate: formatYyyyMmDd(expiry),
+      issueDate: formatYyyyMmDdInTimeZone(today, safeString(quoteMeta.timeZone || quoteMeta.timezone || locationObj.timeZone || locationObj.timezone || "America/Chicago", "America/Chicago")),
       frequencySettings: {
         enabled: false,
       },
-      // Do not send issueDate. HighLevel validates this against the location timezone and can reject
-      // a server-generated date as being in the future. Omitting it lets HighLevel apply the
-      // same current-date default used by the manual New Estimate flow.
       items: customItems,
       liveMode: true,
       automaticTaxesEnabled: true,
