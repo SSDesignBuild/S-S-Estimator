@@ -12,7 +12,7 @@ function json(body: unknown, status = 200) {
   });
 }
 
-const FUNCTION_VERSION = "v24x-ghl-terms-recursive-descriptions-20260506";
+const FUNCTION_VERSION = "v24x-ghl-issue-date-default-20260506";
 const GHL_SERVICES_TAX_CATEGORY_ID = "6852749d6e0bd39dd76d14b4";
 const CONTACT_BASE_URL = "https://services.leadconnectorhq.com";
 const ESTIMATE_BASE_URL = "https://backend.leadconnectorhq.com";
@@ -425,7 +425,9 @@ serve(async (req) => {
       frequencySettings: {
         enabled: false,
       },
-      issueDate: formatYyyyMmDd(today),
+      // Do not send issueDate. HighLevel validates this against the location timezone and can reject
+      // a server-generated date as being in the future. Omitting it lets HighLevel apply the
+      // same current-date default used by the manual New Estimate flow.
       items: customItems,
       liveMode: true,
       automaticTaxesEnabled: true,

@@ -1,15 +1,7 @@
-Deploy this Supabase Edge Function after uploading the site files:
+IMPORTANT: This package fixes the GoHighLevel estimate_date_invalid error by removing the server-generated issueDate from the Edge Function payload. GoHighLevel will now apply its own current issue date, matching the manual New Estimate behavior.
+
+After deploying the web app, redeploy the Supabase Edge Function:
 
 npx supabase functions deploy send-to-ghl --use-api --no-verify-jwt
 
-Function version included in this package:
-v24x-ghl-terms-recursive-descriptions-20260506
-
-Changes:
-- Sends a required title while preserving/fetching terms from GHL invoice/estimate settings.
-- Fetches invoice settings from both LeadConnector services and backend endpoints.
-- Recursively searches the settings/template response for saved estimate terms/conditions fields.
-- Leaves customer address inputs out of the app.
-- Marks every sent line item taxable and enables automaticTaxesEnabled.
-- Replaces generic descriptions with shorter, item/category-specific bullet descriptions.
-- Notes that customer supplies light/fan fixtures; S&S installs them.
+Fixed function version: v24x-ghl-issue-date-default-20260506
