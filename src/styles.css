@@ -2131,3 +2131,35 @@ button:hover {
     width: 100%;
   }
 }
+
+/* Saved Quotes visibility fix: keep panel easy to find and never covering totals */
+.summary-column > .saved-quotes-card {
+  order: 1;
+  margin-top: 0;
+  margin-bottom: 0;
+  position: relative;
+  z-index: 1;
+  border: 1px solid color-mix(in oklab, var(--gold) 42%, var(--line));
+  box-shadow: 0 12px 30px rgba(0,0,0,0.08);
+}
+
+.summary-column > .sticky-card {
+  order: 2;
+}
+
+.summary-column > .commission-box {
+  order: 3;
+}
+
+.summary-column > .summary-alert {
+  order: 0;
+}
+
+.saved-quotes-card .collapsible-head {
+  background: color-mix(in oklab, var(--gold) 12%, var(--card) 88%);
+}
+
+.saved-quotes-card .small-note {
+  padding-left: 18px;
+  padding-right: 18px;
+}

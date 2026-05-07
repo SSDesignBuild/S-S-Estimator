@@ -916,7 +916,7 @@ function App() {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const [toolbarOpen, setToolbarOpen] = useState(true);
   const [renaissanceOpen, setRenaissanceOpen] = useState(true);
-  const [savedQuotesOpen, setSavedQuotesOpen] = useState(false);
+  const [savedQuotesOpen, setSavedQuotesOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [financingOpen, setFinancingOpen] = useState(false);
   const [activeView, setActiveView] = useState("standard");
@@ -1040,7 +1040,8 @@ function App() {
       if (parsed.expanded && typeof parsed.expanded === "object") setExpanded({ ...defaultExpanded, ...parsed.expanded });
       if (typeof parsed.toolbarOpen === "boolean") setToolbarOpen(parsed.toolbarOpen);
       if (typeof parsed.renaissanceOpen === "boolean") setRenaissanceOpen(parsed.renaissanceOpen);
-      if (typeof parsed.savedQuotesOpen === "boolean") setSavedQuotesOpen(parsed.savedQuotesOpen);
+      // Keep Saved Quotes visible by default so it is always easy to find after sign-in.
+      if (typeof parsed.savedQuotesOpen === "boolean") setSavedQuotesOpen(parsed.savedQuotesOpen !== false);
       if (typeof parsed.financingOpen === "boolean") setFinancingOpen(parsed.financingOpen);
       if (["standard", "renaissance"].includes(parsed.activeView)) setActiveView(parsed.activeView);
       if (typeof parsed.searchTerm === "string") setSearchTerm(parsed.searchTerm);
@@ -2894,6 +2895,60 @@ async function refreshAdminUsers() {
               ))}
             </section>
           )}
+          <section className="card saved-quotes-card collapsible-card">
+            <button className="collapsible-head" type="button" onClick={() => setSavedQuotesOpen((value) => !value)} aria-expanded={savedQuotesOpen}>
+              <span>
+                <strong>Saved quotes</strong>
+                <small>Always visible here above the pricing summary.</small>
+              </span>
+              <span className="saved-count-pill">{savedQuotes.length} saved · {savedQuotesOpen ? "Collapse" : "Open"}</span>
+            </button>
+            {savedQuotesOpen && (
+              <>
+            <div className="saved-quote-controls">
+              {permissions.canViewTeamQuotes && (
+                <div className="segmented-control">
+                  <button className={quoteScope === "mine" ? "segmented-btn active" : "segmented-btn"} onClick={() => setQuoteScope("mine")}>My quotes</button>
+                  <button className={quoteScope === "team" ? "segmented-btn active" : "segmented-btn"} onClick={() => setQuoteScope("team")}>Team quotes</button>
+                </div>
+              )}
+              <label className="inline-select">
+                <span>Status</span>
+                <select value={quoteStatusFilter} onChange={(e) => setQuoteStatusFilter(e.target.value)}>
+                  <option value="all">All</option>
+                  <option value="draft">Draft</option>
+                  <option value="sent">Sent</option>
+                  <option value="accepted">Accepted</option>
+                  <option value="declined">Declined</option>
+                </select>
+              </label>
+            </div>
+            {quotesLoading ? <p className="small-note">Loading saved quotes…</p> : null}
+            {!quotesLoading && savedQuotes.length === 0 ? <p className="small-note">No saved quotes yet.</p> : null}
+            <div className="saved-quotes-list">
+              {savedQuotes.map((quote) => (
+                <div key={quote.id} className={selectedQuoteId === quote.id ? "saved-quote-row active" : "saved-quote-row"}>
+                  <button className="saved-quote-main" onClick={() => loadQuote(quote.id)}>
+                    <div>
+                      <strong>{quote.customer_name || "Untitled quote"}</strong>
+                      <span>{quote.customer_email || quote.customer_phone || "No customer contact yet"}</span>
+                      {permissions.canViewTeamQuotes && quote.owner_name ? <span className="owner-line">Owner: {quote.owner_name}</span> : null}
+                    </div>
+                    <div>
+                      <strong>{currency.format(quote.financing_price || quote.cash_price || 0)}</strong>
+                      <span>{quote.tier} · {new Date(quote.updated_at).toLocaleDateString()}</span>
+                      <span className={`status-pill mini status-${quote.status || "draft"}`}>{quote.status || "draft"}</span>
+                      {quote.ghl_estimate_id ? <span className="owner-line">GHL linked</span> : null}
+                    </div>
+                  </button>
+                  <button className="ghost-btn danger-btn row-delete-btn" onClick={(event) => { event.stopPropagation(); deleteQuoteById(quote.id); }} type="button">Delete</button>
+                </div>
+              ))}
+            </div>
+              </>
+            )}
+          </section>
+
           <section className="card sticky-card">
             <div className="section-head compact-head">
               <div>
@@ -3006,59 +3061,7 @@ async function refreshAdminUsers() {
             </div>
           </section>
 
-          <section className="card saved-quotes-card collapsible-card">
-            <button className="collapsible-head" type="button" onClick={() => setSavedQuotesOpen((value) => !value)} aria-expanded={savedQuotesOpen}>
-              <span>
-                <strong>Saved quotes</strong>
-                <small>Load previous quotes only when you need them.</small>
-              </span>
-              <span className="saved-count-pill">{savedQuotes.length} shown · {savedQuotesOpen ? "Hide" : "Show"}</span>
-            </button>
-            {savedQuotesOpen && (
-              <>
-            <div className="saved-quote-controls">
-              {permissions.canViewTeamQuotes && (
-                <div className="segmented-control">
-                  <button className={quoteScope === "mine" ? "segmented-btn active" : "segmented-btn"} onClick={() => setQuoteScope("mine")}>My quotes</button>
-                  <button className={quoteScope === "team" ? "segmented-btn active" : "segmented-btn"} onClick={() => setQuoteScope("team")}>Team quotes</button>
-                </div>
-              )}
-              <label className="inline-select">
-                <span>Status</span>
-                <select value={quoteStatusFilter} onChange={(e) => setQuoteStatusFilter(e.target.value)}>
-                  <option value="all">All</option>
-                  <option value="draft">Draft</option>
-                  <option value="sent">Sent</option>
-                  <option value="accepted">Accepted</option>
-                  <option value="declined">Declined</option>
-                </select>
-              </label>
-            </div>
-            {quotesLoading ? <p className="small-note">Loading saved quotes…</p> : null}
-            {!quotesLoading && savedQuotes.length === 0 ? <p className="small-note">No saved quotes yet.</p> : null}
-            <div className="saved-quotes-list">
-              {savedQuotes.map((quote) => (
-                <div key={quote.id} className={selectedQuoteId === quote.id ? "saved-quote-row active" : "saved-quote-row"}>
-                  <button className="saved-quote-main" onClick={() => loadQuote(quote.id)}>
-                    <div>
-                      <strong>{quote.customer_name || "Untitled quote"}</strong>
-                      <span>{quote.customer_email || quote.customer_phone || "No customer contact yet"}</span>
-                      {permissions.canViewTeamQuotes && quote.owner_name ? <span className="owner-line">Owner: {quote.owner_name}</span> : null}
-                    </div>
-                    <div>
-                      <strong>{currency.format(quote.financing_price || quote.cash_price || 0)}</strong>
-                      <span>{quote.tier} · {new Date(quote.updated_at).toLocaleDateString()}</span>
-                      <span className={`status-pill mini status-${quote.status || "draft"}`}>{quote.status || "draft"}</span>
-                      {quote.ghl_estimate_id ? <span className="owner-line">GHL linked</span> : null}
-                    </div>
-                  </button>
-                  <button className="ghost-btn danger-btn row-delete-btn" onClick={(event) => { event.stopPropagation(); deleteQuoteById(quote.id); }} type="button">Delete</button>
-                </div>
-              ))}
-            </div>
-              </>
-            )}
-          </section>
+
 
           {settings.showCommission && (
             <section className="commission-box card bottom-commission">
