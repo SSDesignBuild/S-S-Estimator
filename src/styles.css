@@ -1967,3 +1967,167 @@ button:hover {
   background: rgba(176, 131, 52, 0.12);
   color: var(--text);
 }
+
+/* UX polish: faster scanning, safer saved-quote panel, less accidental swiping */
+.main-grid {
+  align-items: start;
+}
+
+.line-card,
+.included-item,
+.saved-quote-row,
+.summary-row {
+  scroll-margin-top: 18px;
+}
+
+.line-copy strong,
+.included-item-main strong,
+.saved-quote-main strong {
+  letter-spacing: -0.01em;
+}
+
+.line-meta,
+.small-note,
+.saved-quote-row span,
+.included-item-main span {
+  color: var(--muted);
+}
+
+.qty-box input,
+.renaissance-grid input,
+.renaissance-grid select,
+.location-grid input,
+.customer-grid input,
+.financing-panel input,
+.financing-panel select {
+  min-height: 46px;
+}
+
+.category-toggle {
+  font-weight: 700;
+  background: color-mix(in oklab, var(--card) 86%, var(--bg) 14%);
+}
+
+.summary-column .sticky-card:first-of-type {
+  z-index: 2;
+}
+
+.saved-quotes-card {
+  margin-top: 1rem;
+  position: relative;
+  top: auto;
+  z-index: 1;
+}
+
+.collapsible-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.collapsible-head {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+  padding: 16px 18px;
+  cursor: pointer;
+}
+
+.collapsible-head span:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.collapsible-head strong {
+  font-size: 1.1rem;
+}
+
+.collapsible-head small {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.saved-quotes-card .saved-quote-controls,
+.saved-quotes-card > p,
+.saved-quotes-card .saved-quotes-list {
+  margin-left: 18px;
+  margin-right: 18px;
+}
+
+.saved-quotes-card .saved-quotes-list {
+  margin-bottom: 18px;
+  max-height: min(52vh, 520px);
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.saved-count-pill {
+  white-space: nowrap;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.42rem 0.7rem;
+  font-size: 0.84rem;
+  background: color-mix(in oklab, var(--gold) 14%, var(--card) 86%);
+}
+
+.saved-quote-row {
+  border-color: var(--line);
+  background: color-mix(in oklab, var(--card) 88%, var(--bg) 12%);
+}
+
+.saved-quote-main {
+  color: inherit;
+}
+
+.flag-list.alert {
+  border-width: 1px;
+}
+
+.flag {
+  line-height: 1.42;
+  font-weight: 650;
+}
+
+@media (min-width: 981px) {
+  .main-grid {
+    grid-template-columns: minmax(0, 1.35fr) minmax(360px, 0.65fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .summary-column {
+    order: 0;
+  }
+
+  .saved-quotes-card .saved-quotes-list {
+    max-height: 420px;
+  }
+}
+
+@media (max-width: 720px) {
+  .collapsible-head {
+    align-items: flex-start;
+    display: grid;
+  }
+
+  .saved-count-pill {
+    width: fit-content;
+  }
+
+  .saved-quote-main {
+    grid-template-columns: 1fr;
+  }
+
+  .saved-quote-row {
+    grid-template-columns: 1fr;
+  }
+
+  .row-delete-btn {
+    width: 100%;
+  }
+}

@@ -37,21 +37,25 @@ const financingPlans = [
 
 const engineeringCities = ["brentwood", "franklin", "nolensville", "fairview", "spring hill", "thompson's station", "thompsons station"];
 
-const cityRules = {
-  clarksville: {
-    fee: 1500,
-    message: "Clarksville requires a $1,500 survey fee. Lead time for survey if permit is needed is about 4 weeks."
-  },
-  ...Object.fromEntries(
-    engineeringCities.map((city) => [
-      city,
-      {
-        fee: 0,
-        message: `${city.replace(/(^|\s)\S/g, (c) => c.toUpperCase())} requires engineering. Aluminum: add $800. Wood: add $3,000.`
-      }
-    ])
-  )
-};
+const CLARKSVILLE_SURVEY_MESSAGE = "Clarksville / Montgomery County requires a $1,500 survey fee. Lead time for survey if permit is needed is about 4 weeks.";
+const WILLIAMSON_ENGINEERING_MESSAGE = "Williamson County requires engineering. Aluminum: add $800. Wood: add $3,000.";
+
+function getLocationRules(cityValue, countyValue) {
+  const city = safeString(cityValue).toLowerCase();
+  const county = safeString(countyValue).toLowerCase();
+  const combined = `${city} ${county}`.trim();
+  const rules = [];
+
+  if (combined.includes("clarksville") || county.includes("montgomery")) {
+    rules.push({ key: "montgomery-survey", fee: 1500, message: CLARKSVILLE_SURVEY_MESSAGE });
+  }
+
+  if (county.includes("williamson") || engineeringCities.some((name) => city.includes(name))) {
+    rules.push({ key: "williamson-engineering", fee: 0, message: WILLIAMSON_ENGINEERING_MESSAGE });
+  }
+
+  return rules;
+}
 
 
 function selectInputText(event) {
@@ -912,6 +916,7 @@ function App() {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const [toolbarOpen, setToolbarOpen] = useState(true);
   const [renaissanceOpen, setRenaissanceOpen] = useState(true);
+  const [savedQuotesOpen, setSavedQuotesOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [financingOpen, setFinancingOpen] = useState(false);
   const [activeView, setActiveView] = useState("standard");
@@ -927,7 +932,7 @@ function App() {
   const [userAdminList, setUserAdminList] = useState([]);
   const [userAdminLoading, setUserAdminLoading] = useState(false);
   const [userAdminMessage, setUserAdminMessage] = useState("");
-  const touchStartX = useRef(null);
+  const touchStart = useRef(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -1035,6 +1040,7 @@ function App() {
       if (parsed.expanded && typeof parsed.expanded === "object") setExpanded({ ...defaultExpanded, ...parsed.expanded });
       if (typeof parsed.toolbarOpen === "boolean") setToolbarOpen(parsed.toolbarOpen);
       if (typeof parsed.renaissanceOpen === "boolean") setRenaissanceOpen(parsed.renaissanceOpen);
+      if (typeof parsed.savedQuotesOpen === "boolean") setSavedQuotesOpen(parsed.savedQuotesOpen);
       if (typeof parsed.financingOpen === "boolean") setFinancingOpen(parsed.financingOpen);
       if (["standard", "renaissance"].includes(parsed.activeView)) setActiveView(parsed.activeView);
       if (typeof parsed.searchTerm === "string") setSearchTerm(parsed.searchTerm);
@@ -1051,9 +1057,9 @@ function App() {
   useEffect(() => {
     localStorage.setItem(
       storageKey,
-      JSON.stringify({ selectedTier, lineQtys, settings, customer, selectedPlanId, renaissance, expanded, toolbarOpen, renaissanceOpen, financingOpen, activeView, searchTerm, selectedQuoteId, selectedQuoteStatus, quoteScope, quoteStatusFilter })
+      JSON.stringify({ selectedTier, lineQtys, settings, customer, selectedPlanId, renaissance, expanded, toolbarOpen, renaissanceOpen, savedQuotesOpen, financingOpen, activeView, searchTerm, selectedQuoteId, selectedQuoteStatus, quoteScope, quoteStatusFilter })
     );
-  }, [selectedTier, lineQtys, settings, customer, selectedPlanId, renaissance, expanded, toolbarOpen, renaissanceOpen, financingOpen, activeView, searchTerm, selectedQuoteId, selectedQuoteStatus, quoteScope, quoteStatusFilter]);
+  }, [selectedTier, lineQtys, settings, customer, selectedPlanId, renaissance, expanded, toolbarOpen, renaissanceOpen, savedQuotesOpen, financingOpen, activeView, searchTerm, selectedQuoteId, selectedQuoteStatus, quoteScope, quoteStatusFilter]);
 
   const pricingTiers = useMemo(() => Object.fromEntries(Object.entries(appData.pricingTiers).map(([key, tier]) => [key, { ...tier, multiplier: pricingOverrides.tierMultipliers?.[key] ?? tier.multiplier }])), [pricingOverrides.tierMultipliers]);
   const effectiveAppDefaults = useMemo(() => ({ ...appData.defaultSettings, ...pricingOverrides.appDefaults }), [pricingOverrides.appDefaults]);
@@ -1291,9 +1297,8 @@ function App() {
   const standardSubtotal = useMemo(() => lineItems.reduce((sum, item) => sum + item.extended, 0), [lineItems]);
   const subtotal = standardSubtotal + renaissanceCalc.total;
 
-  const normalizedLocation = `${settings.city || ""} ${settings.county || ""}`.trim().toLowerCase();
-  const matchedCityRule = Object.entries(cityRules).find(([key]) => normalizedLocation.includes(key))?.[1] || null;
-  const locationFee = matchedCityRule?.fee || 0;
+  const locationRules = useMemo(() => getLocationRules(settings.city, settings.county), [settings.city, settings.county]);
+  const locationFee = locationRules.reduce((sum, rule) => sum + safeNumber(rule.fee), 0);
   const taxableBase = subtotal * effectiveAppDefaults.taxablePortion;
   const salesTax = taxableBase * effectiveAppDefaults.taxRate;
   const permittingFee = settings.removePermit ? 0 : effectiveAppDefaults.permittingFee + locationFee;
@@ -1315,7 +1320,9 @@ function App() {
       if (rule.type === "info") issues.push(rule.message);
     }
 
-    if (matchedCityRule?.message) issues.push(matchedCityRule.message);
+    locationRules.forEach((rule) => {
+      if (rule?.message) issues.push(rule.message);
+    });
 
     const hasDeck = activeItems.some((item) => item.category === "Decking");
     const hasSunroom = activeItems.some((item) => item.category === "Sunrooms");
@@ -1363,7 +1370,7 @@ function App() {
     }
 
     return Array.from(new Set(issues));
-  }, [activeItems, lineQtys, matchedCityRule, renaissance.fanBeams, renaissanceCalc]);
+  }, [activeItems, lineQtys, locationRules, renaissance.fanBeams, renaissanceCalc]);
 
   const includedQuoteItemsFull = useMemo(() => {
     const rows = activeItems.map((item) => ({
@@ -2641,13 +2648,23 @@ async function refreshAdminUsers() {
 
       <div
         className="main-grid"
-        onTouchStart={(e) => { touchStartX.current = e.changedTouches[0]?.clientX ?? null; }}
+        onTouchStart={(e) => {
+          if (e.target.closest?.("input, select, textarea, button, label")) {
+            touchStart.current = null;
+            return;
+          }
+          const touch = e.changedTouches[0];
+          touchStart.current = touch ? { x: touch.clientX, y: touch.clientY } : null;
+        }}
         onTouchEnd={(e) => {
-          const endX = e.changedTouches[0]?.clientX ?? null;
-          if (touchStartX.current == null || endX == null) return;
-          const delta = endX - touchStartX.current;
-          if (Math.abs(delta) < 50) return;
-          setActiveView(delta < 0 ? "renaissance" : "standard");
+          const touch = e.changedTouches[0];
+          if (!touchStart.current || !touch) return;
+          const deltaX = touch.clientX - touchStart.current.x;
+          const deltaY = touch.clientY - touchStart.current.y;
+          touchStart.current = null;
+          if (Math.abs(deltaX) < 120) return;
+          if (Math.abs(deltaY) > 55 || Math.abs(deltaX) < Math.abs(deltaY) * 1.75) return;
+          setActiveView(deltaX < 0 ? "renaissance" : "standard");
         }}
       >
         <section className="card">
@@ -2656,7 +2673,7 @@ async function refreshAdminUsers() {
               <div className="section-head">
                 <div>
                   <h2>Standard pricing sheet</h2>
-                  <p className="small-note">Fast-fill layout for on-the-spot quoting. Search, tap quantity, and swipe left for Renaissance.</p>
+                  <p className="small-note">Fast-fill layout for on-the-spot quoting. Search, tap quantity, or use the Standard/Renaissance tabs above.</p>
                 </div>
                 <div className="toolbar-buttons inline-actions">
                   <button className="ghost-btn" onClick={clearAll}>Clear inputs</button>
@@ -2989,14 +3006,16 @@ async function refreshAdminUsers() {
             </div>
           </section>
 
-          <section className="card sticky-card saved-quotes-card">
-            <div className="section-head compact-head">
-              <div>
-                <h2>Saved quotes</h2>
-                <p className="small-note">Admins and managers can see team quotes. Reps see their own.</p>
-              </div>
-              <span className="saved-count-pill">{savedQuotes.length} shown</span>
-            </div>
+          <section className="card saved-quotes-card collapsible-card">
+            <button className="collapsible-head" type="button" onClick={() => setSavedQuotesOpen((value) => !value)} aria-expanded={savedQuotesOpen}>
+              <span>
+                <strong>Saved quotes</strong>
+                <small>Load previous quotes only when you need them.</small>
+              </span>
+              <span className="saved-count-pill">{savedQuotes.length} shown · {savedQuotesOpen ? "Hide" : "Show"}</span>
+            </button>
+            {savedQuotesOpen && (
+              <>
             <div className="saved-quote-controls">
               {permissions.canViewTeamQuotes && (
                 <div className="segmented-control">
@@ -3037,6 +3056,8 @@ async function refreshAdminUsers() {
                 </div>
               ))}
             </div>
+              </>
+            )}
           </section>
 
           {settings.showCommission && (
