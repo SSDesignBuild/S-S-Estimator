@@ -12,7 +12,7 @@ function json(body: unknown, status = 200) {
   });
 }
 
-const FUNCTION_VERSION = "v24x-ghl-central-issue-date-20260506";
+const FUNCTION_VERSION = "v24x-ghl-title-name-40char-20260513";
 const GHL_SERVICES_TAX_CATEGORY_ID = "6852749d6e0bd39dd76d14b4";
 const CONTACT_BASE_URL = "https://services.leadconnectorhq.com";
 const ESTIMATE_BASE_URL = "https://backend.leadconnectorhq.com";
@@ -25,6 +25,12 @@ function safeString(value: unknown, fallback = "") {
 function safeNumber(value: unknown, fallback = 0) {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
+}
+
+function truncateForGhl(value: unknown, maxLength = 40, fallback = "S&S Design Build Estimate") {
+  const text = safeString(value, fallback).trim() || fallback;
+  if (text.length <= maxLength) return text;
+  return text.slice(0, maxLength).trim();
 }
 
 function looksLikeSummaryItem(name: string) {
@@ -394,10 +400,11 @@ serve(async (req) => {
     const e164Phone = toE164(customer.phone) || toE164(locationObj.phone) || "+16155495309";
     const currency = safeString(locationObj.currency || quoteMeta.currency || "USD", "USD") || "USD";
 
-    const estimateTitle = safeString(
+    const estimateTitle = truncateForGhl(
       quoteMeta.estimateName || quoteMeta.title || ghlEstimateDefaults.title || "S&S Design Build Estimate",
+      40,
       "S&S Design Build Estimate",
-    ).trim() || "S&S Design Build Estimate";
+    );
     const termsNotes = safeString(quoteMeta.termsNotes || ghlEstimateDefaults.termsNotes || "", "").trim();
 
     const estimateBody: Record<string, unknown> = {
@@ -468,8 +475,8 @@ serve(async (req) => {
 
     // Final guard: GoHighLevel rejects API-created estimates unless title is present.
     // Keep this immediately before the POST so no later object spread/removal can omit it.
-    estimateBody.title = safeString(estimateBody.title || estimateBody.name || quoteMeta.estimateName || quoteMeta.title || "S&S Design Build Estimate", "S&S Design Build Estimate").trim() || "S&S Design Build Estimate";
-    estimateBody.name = safeString(estimateBody.name || estimateBody.title || "S&S Design Build Estimate", "S&S Design Build Estimate").trim() || "S&S Design Build Estimate";
+    estimateBody.title = truncateForGhl(estimateBody.title || estimateBody.name || quoteMeta.estimateName || quoteMeta.title || "S&S Design Build Estimate", 40, "S&S Design Build Estimate");
+    estimateBody.name = truncateForGhl(estimateBody.name || estimateBody.title || "S&S Design Build Estimate", 40, "S&S Design Build Estimate");
 
     const estimateRes = await fetch(`${ESTIMATE_BASE_URL}/invoices/estimate/`, {
       method: "POST",
