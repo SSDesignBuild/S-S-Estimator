@@ -100,6 +100,221 @@ function safeString(value, fallback = "") {
 }
 
 
+const scheduleStorageKey = "sns-design-build-schedule-v1";
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+function formatDateKey(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function parseDateKey(dateKey) {
+  const [year, month, day] = safeString(dateKey).split("-").map((part) => Number(part));
+  return new Date(year || new Date().getFullYear(), (month || 1) - 1, day || 1);
+}
+
+function addCalendarDays(dateKey, days) {
+  const date = parseDateKey(dateKey);
+  date.setDate(date.getDate() + days);
+  return formatDateKey(date);
+}
+
+function addWeeks(dateKey, weeks) {
+  return addCalendarDays(dateKey, weeks * 7);
+}
+
+function isWeekday(dateKey) {
+  const day = parseDateKey(dateKey).getDay();
+  return day >= 1 && day <= 5;
+}
+
+function nextWeekday(dateKey) {
+  let current = dateKey;
+  while (!isWeekday(current)) current = addCalendarDays(current, 1);
+  return current;
+}
+
+function addWorkdays(startDateKey, workdayCount) {
+  const count = Math.max(1, Math.ceil(Number(workdayCount) || 1));
+  const dates = [];
+  let cursor = nextWeekday(startDateKey);
+  while (dates.length < count) {
+    if (isWeekday(cursor)) dates.push(cursor);
+    cursor = addCalendarDays(cursor, 1);
+  }
+  return dates;
+}
+
+function buildScheduleTitle(customerName, scopes) {
+  const cleanName = safeString(customerName, "Customer").trim() || "Customer";
+  const scopeText = scopes.length ? scopes.join(" + ") : "Outdoor living install";
+  return `${cleanName} — ${scopeText}`;
+}
+
+function quantityFromRows(rows, matchers, fallback = 0) {
+  return rows.reduce((sum, row) => {
+    const text = `${row.category || ""} ${row.service_name || row.name || ""} ${row.service_key || ""}`.toLowerCase();
+    if (!matchers.some((matcher) => text.includes(matcher))) return sum;
+    const qty = Number(row.quantity ?? row.qty ?? 0);
+    return sum + (Number.isFinite(qty) ? Math.max(qty, 0) : 0);
+  }, fallback);
+}
+
+function analyzeScheduleFromQuote({ rows = [], customerName = "", renaissanceCalc = null, activeItems = [], settings = {} }) {
+  const allRows = rows.length ? rows : activeItems.map((item) => ({
+    category: item.category,
+    service_name: item.name,
+    service_key: item.id,
+    quantity: Number(item.qty || 0),
+    unit: item.unit
+  }));
+  const text = allRows.map((row) => `${row.category || ""} ${row.service_name || ""} ${row.service_key || ""}`).join(" ").toLowerCase();
+  const scopes = [];
+  const phases = [];
+  let leadWeeks = 0;
+
+  const renaissanceSqft = Number(renaissanceCalc?.width || 0) * Number(renaissanceCalc?.projection || 0);
+  const renaissanceLf = Number(renaissanceCalc?.width || 0) || quantityFromRows(allRows, ["renaissance", "screen"], 0);
+  const hasRenaissance = renaissanceSqft > 0 || text.includes("renaissance");
+  const hasScreen = text.includes("screen") || text.includes("screen enclosure") || text.includes("screen room");
+  const hasDeck = text.includes("deck");
+  const hasFlatPan = text.includes("flat pan") || text.includes("flatpan");
+  const hasPatioCover = text.includes("patio cover") || text.includes("cover") || hasRenaissance;
+  const hasSunroom = text.includes("sunroom") || text.includes("sun room");
+
+  const screenLf = Math.max(quantityFromRows(allRows, ["screen"], 0), renaissanceLf || 0);
+  const flatPanSqft = Math.max(quantityFromRows(allRows, ["flat pan", "flatpan"], 0), 0);
+  const patioCoverSqft = Math.max(quantityFromRows(allRows, ["patio cover", "cover"], 0), renaissanceSqft || 0);
+  const deckSqft = Math.max(quantityFromRows(allRows, ["deck"], 0), 0);
+  const sunroomLf = Math.max(quantityFromRows(allRows, ["sunroom", "sun room"], 0), screenLf || 0);
+
+  if (hasScreen && hasRenaissance && !hasSunroom) {
+    scopes.push("Renaissance screen room");
+    leadWeeks = Math.max(leadWeeks, 6);
+    phases.push({ name: "Renaissance screen install", days: Math.max(1, Math.ceil((screenLf || renaissanceLf || 30) / 30)), crewLoad: 1, note: "4–6 week material lead time; scheduled at 6 weeks by default." });
+  } else if (hasScreen && !hasSunroom) {
+    scopes.push("Screen room");
+    leadWeeks = Math.max(leadWeeks, 4);
+    phases.push({ name: "Screen room install", days: Math.max(1, Math.ceil((screenLf || 30) / 30)), crewLoad: 1, note: "4 week material lead time." });
+  }
+
+  if (hasFlatPan) {
+    scopes.push("Flat pan");
+    leadWeeks = Math.max(leadWeeks, 4);
+    phases.push({ name: "Flat pan install", days: Math.max(1, Math.ceil((flatPanSqft || patioCoverSqft || 200) / 200)), crewLoad: 1, note: "4 week material lead time." });
+  } else if (hasPatioCover && !hasSunroom && !hasScreen) {
+    scopes.push(hasRenaissance ? "Renaissance patio cover" : "Patio cover");
+    leadWeeks = Math.max(leadWeeks, 4);
+    phases.push({ name: hasRenaissance ? "Renaissance patio cover install" : "Patio cover install", days: Math.max(1, Math.ceil((patioCoverSqft || 200) / 200)), crewLoad: 1, note: "4 week material lead time." });
+  }
+
+  if (hasDeck) {
+    scopes.push("Deck");
+    leadWeeks = Math.max(leadWeeks, 4);
+    phases.push({ name: "Deck install", days: Math.max(3, Math.ceil((deckSqft || 200) / 200) * 3), crewLoad: 1, note: "4 week material lead time." });
+  }
+
+  if (hasSunroom) {
+    scopes.push("Sunroom");
+    leadWeeks = Math.max(leadWeeks, 4);
+    phases.push({ name: "Sunroom framing", days: Math.max(1, Math.ceil((sunroomLf || 25) / 25)), crewLoad: 1, note: "Frame first, then order custom window sizes." });
+    phases.push({ name: "Sunroom window install", days: Math.max(1, Math.ceil((sunroomLf || 25) / 25)), crewLoad: 1, waitWeeksAfterPrevious: 6, note: "4–6 week custom window lead time after framing; scheduled at 6 weeks by default." });
+  }
+
+  if (!phases.length) {
+    scopes.push("General install");
+    leadWeeks = 4;
+    phases.push({ name: "General install", days: 1, crewLoad: 1, note: "Default 4 week material lead time. Edit as needed." });
+  }
+
+  return {
+    title: buildScheduleTitle(customerName, Array.from(new Set(scopes))),
+    scopes: Array.from(new Set(scopes)),
+    leadWeeks: Math.max(leadWeeks, 0),
+    phases,
+    city: settings.city || "",
+    county: settings.county || ""
+  };
+}
+
+function latestScheduledDate(jobs) {
+  const dates = jobs.flatMap((job) => job.dates || []);
+  if (!dates.length) return null;
+  return dates.sort().at(-1);
+}
+
+function hasCrewCapacity(jobs, dateKey) {
+  const load = jobs.reduce((sum, job) => sum + ((job.dates || []).includes(dateKey) ? Number(job.crewLoad || 1) : 0), 0);
+  return load < 2;
+}
+
+function firstAvailableWorkBlock(jobs, earliestDateKey, days) {
+  let cursor = nextWeekday(earliestDateKey);
+  let guard = 0;
+  while (guard < 730) {
+    const block = addWorkdays(cursor, days);
+    if (block.every((dateKey) => hasCrewCapacity(jobs, dateKey))) return block;
+    cursor = addCalendarDays(cursor, 1);
+    cursor = nextWeekday(cursor);
+    guard += 1;
+  }
+  return addWorkdays(earliestDateKey, days);
+}
+
+function schedulePlanToJobs(plan, existingJobs, baseDateKey, quoteId) {
+  const jobs = [];
+  let workingJobs = [...existingJobs];
+  let earliest = addWeeks(baseDateKey, plan.leadWeeks || 0);
+  const latest = latestScheduledDate(workingJobs);
+  if (latest && latest > earliest) earliest = addCalendarDays(latest, 1);
+
+  plan.phases.forEach((phase, index) => {
+    if (phase.waitWeeksAfterPrevious && jobs.length) {
+      const previousEnd = jobs[jobs.length - 1].dates.at(-1);
+      earliest = addWeeks(previousEnd, phase.waitWeeksAfterPrevious);
+    }
+    const dates = firstAvailableWorkBlock(workingJobs, earliest, phase.days || 1);
+    const job = {
+      id: `job-${Date.now()}-${index}-${Math.random().toString(16).slice(2)}`,
+      quoteId: quoteId || null,
+      title: plan.title,
+      phaseName: phase.name,
+      scopes: plan.scopes,
+      city: plan.city || "",
+      county: plan.county || "",
+      crewLoad: phase.crewLoad || 1,
+      dates,
+      note: phase.note || "",
+      status: "scheduled",
+      createdAt: new Date().toISOString()
+    };
+    jobs.push(job);
+    workingJobs.push(job);
+    earliest = addCalendarDays(dates.at(-1), 1);
+  });
+
+  return jobs;
+}
+
+function getMonthDays(monthDateKey) {
+  const monthDate = parseDateKey(monthDateKey);
+  const year = monthDate.getFullYear();
+  const month = monthDate.getMonth();
+  const first = new Date(year, month, 1);
+  const start = new Date(first);
+  start.setDate(first.getDate() - first.getDay());
+  const days = [];
+  for (let i = 0; i < 42; i += 1) {
+    const day = new Date(start);
+    day.setDate(start.getDate() + i);
+    days.push({ dateKey: formatDateKey(day), inMonth: day.getMonth() === month, label: day.getDate(), weekday: day.getDay() });
+  }
+  return days;
+}
+
+
 function unitMeasurementText(unit) {
   const normalized = safeString(unit, "").toLowerCase();
   if (normalized.includes("sqft") || normalized.includes("square")) return "Measured by approved square footage and field layout.";
@@ -933,6 +1148,11 @@ function App() {
   const [userAdminLoading, setUserAdminLoading] = useState(false);
   const [userAdminMessage, setUserAdminMessage] = useState("");
   const touchStart = useRef(null);
+  const [scheduleJobs, setScheduleJobs] = useState([]);
+  const [scheduleOpen, setScheduleOpen] = useState(true);
+  const [calendarMonth, setCalendarMonth] = useState(formatDateKey(new Date()).slice(0, 7) + "-01");
+  const [scheduleMessage, setScheduleMessage] = useState("");
+  const [manualJob, setManualJob] = useState({ title: "", scope: "Patio cover install", startDate: formatDateKey(new Date()), days: 1, note: "" });
 
   useEffect(() => {
     let isMounted = true;
@@ -1046,14 +1266,34 @@ function App() {
       if (["standard", "renaissance"].includes(parsed.activeView)) setActiveView(parsed.activeView);
       if (typeof parsed.searchTerm === "string") setSearchTerm(parsed.searchTerm);
       if (typeof parsed.selectedQuoteId === "string" || parsed.selectedQuoteId === null) setSelectedQuoteId(parsed.selectedQuoteId);
-      if (["draft", "sent", "accepted", "declined"].includes(parsed.selectedQuoteStatus)) setSelectedQuoteStatus(parsed.selectedQuoteStatus);
+      if (["draft", "sent", "accepted", "declined", "sold"].includes(parsed.selectedQuoteStatus)) setSelectedQuoteStatus(parsed.selectedQuoteStatus);
       if (["mine", "team"].includes(parsed.quoteScope)) setQuoteScope(parsed.quoteScope);
-      if (["all", "draft", "sent", "accepted", "declined"].includes(parsed.quoteStatusFilter)) setQuoteStatusFilter(parsed.quoteStatusFilter);
+      if (["all", "draft", "sent", "accepted", "declined", "sold"].includes(parsed.quoteStatusFilter)) setQuoteStatusFilter(parsed.quoteStatusFilter);
     } catch (err) {
       console.error("Failed to load saved estimator state:", err);
       localStorage.removeItem(storageKey);
     }
   }, []);
+
+  useEffect(() => {
+    try {
+      const savedSchedule = JSON.parse(localStorage.getItem(scheduleStorageKey) || "[]");
+      if (Array.isArray(savedSchedule)) setScheduleJobs(savedSchedule);
+    } catch (err) {
+      console.error("Failed to load schedule", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(scheduleStorageKey, JSON.stringify(scheduleJobs));
+  }, [scheduleJobs]);
+
+  useEffect(() => {
+    if (scheduleJobs.length) {
+      const newest = latestScheduledDate(scheduleJobs);
+      if (newest) setCalendarMonth(newest.slice(0, 7) + "-01");
+    }
+  }, [scheduleJobs.length]);
 
   useEffect(() => {
     localStorage.setItem(
@@ -1411,6 +1651,26 @@ function App() {
 
     return rows;
   }, [activeItems, renaissanceCalc]);
+
+  const currentSchedulePlan = useMemo(() => analyzeScheduleFromQuote({
+    rows: includedQuoteItemsFull.map((item) => ({ category: item.category, service_name: item.name, quantity: item.quantity, service_key: item.key })),
+    customerName: customer.name,
+    renaissanceCalc,
+    activeItems,
+    settings
+  }), [includedQuoteItemsFull, customer.name, renaissanceCalc, activeItems, settings]);
+
+  const calendarDays = useMemo(() => getMonthDays(calendarMonth), [calendarMonth]);
+  const jobsByDate = useMemo(() => {
+    const map = {};
+    scheduleJobs.forEach((job) => {
+      (job.dates || []).forEach((dateKey) => {
+        if (!map[dateKey]) map[dateKey] = [];
+        map[dateKey].push(job);
+      });
+    });
+    return map;
+  }, [scheduleJobs]);
 
   const lineCount = activeItems.length + (renaissanceCalc.total > 0 ? 1 : 0);
 
@@ -1986,10 +2246,63 @@ function App() {
     return quoteId;
   }
 
+  function addCurrentQuoteToSchedule() {
+    const baseDate = formatDateKey(new Date());
+    const newJobs = schedulePlanToJobs(currentSchedulePlan, scheduleJobs, baseDate, selectedQuoteId);
+    if (!newJobs.length) {
+      setScheduleMessage("No schedulable work found for this quote.");
+      return;
+    }
+    setScheduleJobs((current) => [...current, ...newJobs]);
+    setScheduleOpen(true);
+    setCalendarMonth((newJobs[0]?.dates?.[0] || baseDate).slice(0, 7) + "-01");
+    setScheduleMessage(`Scheduled ${newJobs.length} phase${newJobs.length === 1 ? "" : "s"}: ${newJobs.map((job) => `${job.phaseName} (${job.dates[0]}${job.dates.length > 1 ? ` to ${job.dates.at(-1)}` : ""})`).join("; ")}`);
+  }
+
+  function addManualJobToSchedule() {
+    const title = safeString(manualJob.title).trim() || "Manual scheduled job";
+    const scope = safeString(manualJob.scope).trim() || "Install";
+    const start = manualJob.startDate || formatDateKey(new Date());
+    const days = Math.max(1, Math.ceil(Number(manualJob.days) || 1));
+    const block = firstAvailableWorkBlock(scheduleJobs, start, days);
+    const job = {
+      id: `manual-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      quoteId: null,
+      title,
+      phaseName: scope,
+      scopes: [scope],
+      city: "",
+      county: "",
+      crewLoad: 1,
+      dates: block,
+      note: manualJob.note || "Manual calendar entry.",
+      status: "scheduled",
+      createdAt: new Date().toISOString()
+    };
+    setScheduleJobs((current) => [...current, job]);
+    setScheduleOpen(true);
+    setCalendarMonth(block[0].slice(0, 7) + "-01");
+    setScheduleMessage(`Manual job scheduled: ${scope} on ${block[0]}${block.length > 1 ? ` to ${block.at(-1)}` : ""}.`);
+    setManualJob((current) => ({ ...current, title: "", note: "" }));
+  }
+
+  function updateScheduleJob(jobId, field, value) {
+    setScheduleJobs((current) => current.map((job) => job.id === jobId ? { ...job, [field]: value } : job));
+  }
+
+  function removeScheduleJob(jobId) {
+    setScheduleJobs((current) => current.filter((job) => job.id !== jobId));
+  }
+
   async function setQuoteStatus(status) {
     if (!selectedQuoteId) {
       setSelectedQuoteStatus(status);
-      setSaveMessage(`Quote status set to ${status}. Save the quote to keep it.`);
+      if (status === "sold") {
+        addCurrentQuoteToSchedule();
+        setSaveMessage("Quote marked sold and added to the local production schedule. Save the quote to keep the sold status in Saved Quotes.");
+      } else {
+        setSaveMessage(`Quote status set to ${status}. Save the quote to keep it.`);
+      }
       return;
     }
 
@@ -2006,6 +2319,9 @@ function App() {
 
     setSelectedQuoteStatus(status);
     setSaveMessage(`Quote marked ${status}.`);
+    if (status === "sold") {
+      addCurrentQuoteToSchedule();
+    }
     await refreshSavedQuotes();
   }
 
@@ -2638,6 +2954,88 @@ async function refreshAdminUsers() {
         </section>
       )}
 
+      <section className="card schedule-card collapsible-card">
+        <button className="collapsible-head schedule-head" type="button" onClick={() => setScheduleOpen((value) => !value)} aria-expanded={scheduleOpen}>
+          <span>
+            <strong>Production schedule</strong>
+            <small>Weekday calendar · 2 crews max per day · sold quotes auto-schedule after material lead time.</small>
+          </span>
+          <span className="saved-count-pill">{scheduleJobs.length} phase{scheduleJobs.length === 1 ? "" : "s"} · {scheduleOpen ? "Collapse" : "Open"}</span>
+        </button>
+        {scheduleOpen && (
+          <div className="schedule-body">
+            <div className="schedule-top-grid">
+              <div className="schedule-intelligence-panel">
+                <h3>Current quote schedule logic</h3>
+                <p className="small-note">Mark the quote <strong>sold</strong> to automatically add it after the last scheduled job without exceeding two crews per weekday.</p>
+                <div className="schedule-plan-box">
+                  <strong>{currentSchedulePlan.title}</strong>
+                  <span>Lead time: {currentSchedulePlan.leadWeeks || 0} week{currentSchedulePlan.leadWeeks === 1 ? "" : "s"}</span>
+                  {currentSchedulePlan.phases.map((phase) => (
+                    <span key={`phase-${phase.name}`}>{phase.name}: {phase.days} work day{phase.days === 1 ? "" : "s"}{phase.waitWeeksAfterPrevious ? ` after ${phase.waitWeeksAfterPrevious} week window lead time` : ""}</span>
+                  ))}
+                </div>
+                <div className="toolbar-buttons inline-actions">
+                  <button className="ghost-btn" type="button" onClick={addCurrentQuoteToSchedule}>Add current quote manually</button>
+                </div>
+                {scheduleMessage ? <p className="small-note success-note">{scheduleMessage}</p> : null}
+              </div>
+              <div className="manual-schedule-panel">
+                <h3>Add job manually</h3>
+                <div className="manual-schedule-grid">
+                  <label>Job name<input type="text" value={manualJob.title} placeholder="Smith patio cover" onChange={(e) => setManualJob((current) => ({ ...current, title: e.target.value }))} /></label>
+                  <label>Scope<input type="text" value={manualJob.scope} placeholder="Patio cover + screen install" onChange={(e) => setManualJob((current) => ({ ...current, scope: e.target.value }))} /></label>
+                  <label>Earliest start<input type="date" value={manualJob.startDate} onChange={(e) => setManualJob((current) => ({ ...current, startDate: e.target.value }))} /></label>
+                  <label>Work days<input type="number" min="1" step="1" value={manualJob.days} onChange={(e) => setManualJob((current) => ({ ...current, days: e.target.value }))} /></label>
+                </div>
+                <label>Notes<textarea rows="2" value={manualJob.note} placeholder="Crew notes, material notes, access notes..." onChange={(e) => setManualJob((current) => ({ ...current, note: e.target.value }))} /></label>
+                <button className="ghost-btn" type="button" onClick={addManualJobToSchedule}>Add to next available slot</button>
+              </div>
+            </div>
+            <div className="calendar-toolbar">
+              <button className="ghost-btn" type="button" onClick={() => setCalendarMonth(addCalendarDays(calendarMonth, -32).slice(0, 7) + "-01")}>Previous</button>
+              <h3>{parseDateKey(calendarMonth).toLocaleString(undefined, { month: "long", year: "numeric" })}</h3>
+              <button className="ghost-btn" type="button" onClick={() => setCalendarMonth(addCalendarDays(calendarMonth, 32).slice(0, 7) + "-01")}>Next</button>
+            </div>
+            <div className="calendar-grid">
+              {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => <div className="calendar-weekday" key={day}>{day}</div>)}
+              {calendarDays.map((day) => {
+                const dayJobs = jobsByDate[day.dateKey] || [];
+                const isBlocked = day.weekday === 0 || day.weekday === 6;
+                return (
+                  <div key={day.dateKey} className={`calendar-day ${day.inMonth ? "" : "muted"} ${isBlocked ? "weekend" : ""} ${dayJobs.length >= 2 ? "full" : ""}`}>
+                    <div className="calendar-day-head"><strong>{day.label}</strong><span>{isBlocked ? "Closed" : `${dayJobs.length}/2 crews`}</span></div>
+                    {dayJobs.map((job) => (
+                      <div className="calendar-job-pill" key={`${day.dateKey}-${job.id}`} title={`${job.title} — ${job.phaseName}`}>
+                        <strong>{job.title}</strong>
+                        <span>{job.phaseName}</span>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="scheduled-job-list">
+              <h3>Scheduled jobs</h3>
+              {!scheduleJobs.length ? <p className="small-note">No jobs scheduled yet.</p> : null}
+              {scheduleJobs.slice().sort((a, b) => (a.dates?.[0] || "").localeCompare(b.dates?.[0] || "")).map((job) => (
+                <div className="scheduled-job-row" key={job.id}>
+                  <div>
+                    <input className="schedule-edit-title" value={job.title} onChange={(e) => updateScheduleJob(job.id, "title", e.target.value)} />
+                    <span>{job.phaseName} · {(job.dates || []).join(", ")} · {job.scopes?.join(" + ")}</span>
+                    {job.note ? <small>{job.note}</small> : null}
+                  </div>
+                  <div className="toolbar-buttons inline-actions">
+                    <button className="ghost-btn" type="button" onClick={() => setCalendarMonth((job.dates?.[0] || calendarMonth).slice(0, 7) + "-01")}>View</button>
+                    <button className="ghost-btn danger-btn" type="button" onClick={() => removeScheduleJob(job.id)}>Remove</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
+
       {flags.length > 0 && (
         <section className="flag-list card alert">
           <h2>Red flags / restrictions</h2>
@@ -2920,6 +3318,7 @@ async function refreshAdminUsers() {
                   <option value="sent">Sent</option>
                   <option value="accepted">Accepted</option>
                   <option value="declined">Declined</option>
+                  <option value="sold">Sold</option>
                 </select>
               </label>
             </div>
@@ -2981,7 +3380,7 @@ async function refreshAdminUsers() {
             <div className="quote-status-strip">
               <span className={`status-pill status-${selectedQuoteStatus}`}>Status: {selectedQuoteStatus}</span>
               <div className="status-actions">
-                {["draft", "sent", "accepted", "declined"].map((status) => (
+                {["draft", "sent", "accepted", "declined", "sold"].map((status) => (
                   <button key={status} type="button" className={selectedQuoteStatus === status ? "status-btn active" : "status-btn"} onClick={() => setQuoteStatus(status)}>{status}</button>
                 ))}
               </div>
