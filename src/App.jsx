@@ -40,6 +40,36 @@ const engineeringCities = ["brentwood", "franklin", "nolensville", "fairview", "
 const CLARKSVILLE_SURVEY_MESSAGE = "Clarksville / Montgomery County requires a $1,500 survey fee. Lead time for survey if permit is needed is about 4 weeks.";
 const WILLIAMSON_ENGINEERING_MESSAGE = "Williamson County requires engineering. Aluminum: add $800. Wood: add $3,000.";
 
+
+const manualScopeOptions = [
+  { value: "Patio cover install", label: "Patio cover install" },
+  { value: "Renaissance patio cover install", label: "Renaissance patio cover install" },
+  { value: "Flat pan install", label: "Flat pan install" },
+  { value: "Screen room install", label: "Screen room install" },
+  { value: "Renaissance screen room install", label: "Renaissance screen room install" },
+  { value: "Sunroom install", label: "Sunroom install" },
+  { value: "Sunroom framing", label: "Sunroom framing" },
+  { value: "Sunroom window install", label: "Sunroom window install" },
+  { value: "Deck install", label: "Deck install" },
+  { value: "Patio cover + screen install", label: "Patio cover + screen install" },
+  { value: "Patio cover + deck install", label: "Patio cover + deck install" },
+  { value: "Screen room + deck install", label: "Screen room + deck install" },
+  { value: "Electrical: fans / outlets", label: "Electrical: fans / outlets" },
+  { value: "Concrete slab install", label: "Concrete slab install" },
+  { value: "Paver patio install", label: "Paver patio install" },
+  { value: "Demolition / removal", label: "Demolition / removal" },
+  { value: "Service / punch list", label: "Service / punch list" }
+];
+
+function isPresetManualScope(value) {
+  return manualScopeOptions.some((option) => option.value === safeString(value));
+}
+
+function normalizeManualScope(value, fallback = "Patio cover install") {
+  const cleaned = safeString(value).trim();
+  return cleaned || fallback;
+}
+
 const defaultRedFlagRules = [
   {
     id: "montgomery-survey",
@@ -2362,7 +2392,7 @@ function App() {
 
   function addManualJobToSchedule() {
     const title = safeString(manualJob.title).trim() || "Manual scheduled job";
-    const scope = safeString(manualJob.scope).trim() || "Install";
+    const scope = normalizeManualScope(manualJob.scope, "Install");
     const start = manualJob.startDate || formatDateKey(new Date());
     const days = Math.max(1, Math.ceil(Number(manualJob.days) || 1));
     const block = firstAvailableWorkBlock(scheduleJobs, start, days);
@@ -3204,7 +3234,18 @@ async function refreshAdminUsers() {
                 <h3>Add job manually</h3>
                 <div className="manual-schedule-grid">
                   <label>Job name<input type="text" value={manualJob.title} placeholder="Smith patio cover" onChange={(e) => setManualJob((current) => ({ ...current, title: e.target.value }))} /></label>
-                  <label>Scope<input type="text" value={manualJob.scope} placeholder="Patio cover + screen install" onChange={(e) => setManualJob((current) => ({ ...current, scope: e.target.value }))} /></label>
+                  <label>Scope
+                    <select
+                      value={isPresetManualScope(manualJob.scope) ? manualJob.scope : "__custom__"}
+                      onChange={(e) => setManualJob((current) => ({ ...current, scope: e.target.value === "__custom__" ? "" : e.target.value }))}
+                    >
+                      {manualScopeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                      <option value="__custom__">Custom scope...</option>
+                    </select>
+                  </label>
+                  {!isPresetManualScope(manualJob.scope) ? (
+                    <label>Custom scope<input type="text" value={manualJob.scope} placeholder="Describe the job scope" onChange={(e) => setManualJob((current) => ({ ...current, scope: e.target.value }))} /></label>
+                  ) : null}
                   <label>Earliest start<input type="date" value={manualJob.startDate} onChange={(e) => setManualJob((current) => ({ ...current, startDate: e.target.value }))} /></label>
                   <label>Work days<input type="number" min="1" step="1" value={manualJob.days} onChange={(e) => setManualJob((current) => ({ ...current, days: e.target.value }))} /></label>
                 </div>
@@ -3312,7 +3353,18 @@ async function refreshAdminUsers() {
               </div>
               <div className="manual-schedule-grid">
                 <label>Job name<input type="text" value={scheduleEditDraft.title} onChange={(e) => setScheduleEditDraft((current) => ({ ...current, title: e.target.value }))} /></label>
-                <label>Scope<input type="text" value={scheduleEditDraft.phaseName} onChange={(e) => setScheduleEditDraft((current) => ({ ...current, phaseName: e.target.value }))} /></label>
+                <label>Scope
+                  <select
+                    value={isPresetManualScope(scheduleEditDraft.phaseName) ? scheduleEditDraft.phaseName : "__custom__"}
+                    onChange={(e) => setScheduleEditDraft((current) => ({ ...current, phaseName: e.target.value === "__custom__" ? "" : e.target.value }))}
+                  >
+                    {manualScopeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                    <option value="__custom__">Custom scope...</option>
+                  </select>
+                </label>
+                {!isPresetManualScope(scheduleEditDraft.phaseName) ? (
+                  <label>Custom scope<input type="text" value={scheduleEditDraft.phaseName} placeholder="Describe the job scope" onChange={(e) => setScheduleEditDraft((current) => ({ ...current, phaseName: e.target.value }))} /></label>
+                ) : null}
                 <label>Start date<input type="date" value={scheduleEditDraft.startDate} onChange={(e) => setScheduleEditDraft((current) => ({ ...current, startDate: e.target.value }))} /></label>
                 <label>Work days<input type="number" min="1" step="1" value={scheduleEditDraft.days} onChange={(e) => setScheduleEditDraft((current) => ({ ...current, days: e.target.value }))} /></label>
               </div>
