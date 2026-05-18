@@ -2203,3 +2203,72 @@ button:hover {
   .manual-schedule-grid { grid-template-columns: 1fr; }
   .calendar-day { min-height: 112px; }
 }
+
+
+/* v24x schedule/navigation polish */
+.view-switch-btn,
+.sold-action-btn {
+  border-color: rgba(35, 31, 26, 0.22);
+}
+.sold-action-btn {
+  background: linear-gradient(180deg, var(--gold), var(--gold-strong));
+  color: #fff;
+  border-color: transparent;
+  font-weight: 800;
+}
+.calendar-view-card {
+  margin-bottom: 24px;
+  overflow: hidden;
+}
+.schedule-view-head {
+  align-items: center;
+}
+.collapsed-sheet-note {
+  padding: 18px;
+  border: 1px dashed var(--line);
+  border-radius: 16px;
+  background: rgba(200, 155, 60, 0.07);
+}
+.bottom-commission {
+  position: static !important;
+  margin-top: 14px;
+  z-index: 1;
+}
+.summary-column {
+  padding-bottom: 180px;
+}
+.sticky-card {
+  position: static !important;
+  top: auto !important;
+}
+.redflag-admin-list {
+  display: grid;
+  gap: 12px;
+}
+.redflag-admin-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(200, 155, 60, 0.05);
+}
+.redflag-message-field {
+  grid-column: 1 / -2;
+}
+.redflag-admin-row textarea {
+  min-height: 72px;
+}
+@media (max-width: 900px) {
+  .redflag-admin-row {
+    grid-template-columns: 1fr;
+  }
+  .redflag-message-field {
+    grid-column: auto;
+  }
+  .calendar-view-card {
+    overflow-x: auto;
+  }
+}

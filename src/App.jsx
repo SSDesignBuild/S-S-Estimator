@@ -40,21 +40,52 @@ const engineeringCities = ["brentwood", "franklin", "nolensville", "fairview", "
 const CLARKSVILLE_SURVEY_MESSAGE = "Clarksville / Montgomery County requires a $1,500 survey fee. Lead time for survey if permit is needed is about 4 weeks.";
 const WILLIAMSON_ENGINEERING_MESSAGE = "Williamson County requires engineering. Aluminum: add $800. Wood: add $3,000.";
 
-function getLocationRules(cityValue, countyValue) {
+const defaultRedFlagRules = [
+  {
+    id: "montgomery-survey",
+    label: "Montgomery County / Clarksville survey",
+    cityKeywords: "clarksville",
+    countyKeywords: "montgomery",
+    fee: 1500,
+    message: CLARKSVILLE_SURVEY_MESSAGE
+  },
+  {
+    id: "williamson-engineering",
+    label: "Williamson County engineering",
+    cityKeywords: engineeringCities.join(", "),
+    countyKeywords: "williamson",
+    fee: 0,
+    message: WILLIAMSON_ENGINEERING_MESSAGE
+  }
+];
+
+function keywordMatches(value, keywords) {
+  const target = safeString(value).toLowerCase();
+  return safeString(keywords)
+    .split(/[\n,]/)
+    .map((keyword) => keyword.trim().toLowerCase())
+    .filter(Boolean)
+    .some((keyword) => target.includes(keyword));
+}
+
+function getLocationRules(cityValue, countyValue, customRules = defaultRedFlagRules) {
   const city = safeString(cityValue).toLowerCase();
   const county = safeString(countyValue).toLowerCase();
-  const combined = `${city} ${county}`.trim();
   const rules = [];
 
-  if (combined.includes("clarksville") || county.includes("montgomery")) {
-    rules.push({ key: "montgomery-survey", fee: 1500, message: CLARKSVILLE_SURVEY_MESSAGE });
-  }
+  (Array.isArray(customRules) ? customRules : defaultRedFlagRules).forEach((rule) => {
+    const cityMatch = keywordMatches(city, rule.cityKeywords);
+    const countyMatch = keywordMatches(county, rule.countyKeywords);
+    if (cityMatch || countyMatch) {
+      rules.push({
+        key: rule.id || `${rule.label}-${rule.message}`,
+        fee: safeNumber(rule.fee),
+        message: safeString(rule.message).trim() || safeString(rule.label).trim()
+      });
+    }
+  });
 
-  if (county.includes("williamson") || engineeringCities.some((name) => city.includes(name))) {
-    rules.push({ key: "williamson-engineering", fee: 0, message: WILLIAMSON_ENGINEERING_MESSAGE });
-  }
-
-  return rules;
+  return rules.filter((rule) => rule.message);
 }
 
 
@@ -175,6 +206,10 @@ function analyzeScheduleFromQuote({ rows = [], customerName = "", renaissanceCal
   const phases = [];
   let leadWeeks = 0;
 
+  const hasShingles = text.includes("shingle") || text.includes("mule hide");
+  const hasFanOrOutlet = text.includes("fan") || text.includes("outlet") || text.includes("plug") || text.includes("receptacle") || text.includes("gfci") || text.includes("110") || text.includes("220");
+  const patioCoverExtraDays = (hasShingles ? 1 : 0) + (hasFanOrOutlet ? 1 : 0);
+
   const renaissanceSqft = Number(renaissanceCalc?.width || 0) * Number(renaissanceCalc?.projection || 0);
   const renaissanceLf = Number(renaissanceCalc?.width || 0) || quantityFromRows(allRows, ["renaissance", "screen"], 0);
   const hasRenaissance = renaissanceSqft > 0 || text.includes("renaissance");
@@ -203,11 +238,15 @@ function analyzeScheduleFromQuote({ rows = [], customerName = "", renaissanceCal
   if (hasFlatPan) {
     scopes.push("Flat pan");
     leadWeeks = Math.max(leadWeeks, 4);
-    phases.push({ name: "Flat pan install", days: Math.max(1, Math.ceil((flatPanSqft || patioCoverSqft || 200) / 200)), crewLoad: 1, note: "4 week material lead time." });
+    phases.push({ name: "Flat pan install", days: Math.max(1, Math.ceil((flatPanSqft || patioCoverSqft || 200) / 200)) + patioCoverExtraDays, crewLoad: 1, note: `4 week material lead time.${hasShingles ? " Shingles add 1 install day." : ""}${hasFanOrOutlet ? " Fans/outlets add 1 install day." : ""}` });
+  } else if (hasRenaissance && hasPatioCover && !hasSunroom && !hasScreen) {
+    scopes.push("Renaissance patio cover");
+    leadWeeks = Math.max(leadWeeks, 6);
+    phases.push({ name: "Renaissance patio cover install", days: Math.max(1, Math.ceil((renaissanceSqft || patioCoverSqft || 200) / 200)) + patioCoverExtraDays, crewLoad: 1, note: `4–6 week Renaissance material lead time; scheduled at 6 weeks by default.${hasShingles ? " Shingles add 1 install day." : ""}${hasFanOrOutlet ? " Fans/outlets add 1 install day." : ""}` });
   } else if (hasPatioCover && !hasSunroom && !hasScreen) {
-    scopes.push(hasRenaissance ? "Renaissance patio cover" : "Patio cover");
+    scopes.push("Patio cover");
     leadWeeks = Math.max(leadWeeks, 4);
-    phases.push({ name: hasRenaissance ? "Renaissance patio cover install" : "Patio cover install", days: Math.max(1, Math.ceil((patioCoverSqft || 200) / 200)), crewLoad: 1, note: "4 week material lead time." });
+    phases.push({ name: "Patio cover install", days: Math.max(1, Math.ceil((patioCoverSqft || 200) / 200)) + patioCoverExtraDays, crewLoad: 1, note: `4 week material lead time.${hasShingles ? " Shingles add 1 install day." : ""}${hasFanOrOutlet ? " Fans/outlets add 1 install day." : ""}` });
   }
 
   if (hasDeck) {
@@ -1135,6 +1174,8 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [financingOpen, setFinancingOpen] = useState(false);
   const [activeView, setActiveView] = useState("standard");
+  const [appView, setAppView] = useState("estimate");
+  const [standardPricingOpen, setStandardPricingOpen] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [pricingOverrides, setPricingOverrides] = useState({ appDefaults: {}, tierMultipliers: {}, linePrices: {}, customServices: [], renaissanceTablePercent: 0, renaissanceAddOns: {}, ghlSettings: {}, ghlMappings: [] });
   const [pricingDraft, setPricingDraft] = useState({ appDefaults: {}, tierMultipliers: {}, linePrices: {}, customServices: [], renaissanceTablePercent: 0, renaissanceAddOns: {}, ghlSettings: {}, ghlMappings: [] });
@@ -1153,6 +1194,7 @@ function App() {
   const [calendarMonth, setCalendarMonth] = useState(formatDateKey(new Date()).slice(0, 7) + "-01");
   const [scheduleMessage, setScheduleMessage] = useState("");
   const [manualJob, setManualJob] = useState({ title: "", scope: "Patio cover install", startDate: formatDateKey(new Date()), days: 1, note: "" });
+  const [redFlagRules, setRedFlagRules] = useState(defaultRedFlagRules);
 
   useEffect(() => {
     let isMounted = true;
@@ -1264,6 +1306,9 @@ function App() {
       if (typeof parsed.savedQuotesOpen === "boolean") setSavedQuotesOpen(parsed.savedQuotesOpen !== false);
       if (typeof parsed.financingOpen === "boolean") setFinancingOpen(parsed.financingOpen);
       if (["standard", "renaissance"].includes(parsed.activeView)) setActiveView(parsed.activeView);
+      if (["estimate", "calendar"].includes(parsed.appView)) setAppView(parsed.appView);
+      if (typeof parsed.standardPricingOpen === "boolean") setStandardPricingOpen(parsed.standardPricingOpen);
+      if (Array.isArray(parsed.redFlagRules)) setRedFlagRules(parsed.redFlagRules);
       if (typeof parsed.searchTerm === "string") setSearchTerm(parsed.searchTerm);
       if (typeof parsed.selectedQuoteId === "string" || parsed.selectedQuoteId === null) setSelectedQuoteId(parsed.selectedQuoteId);
       if (["draft", "sent", "accepted", "declined", "sold"].includes(parsed.selectedQuoteStatus)) setSelectedQuoteStatus(parsed.selectedQuoteStatus);
@@ -1298,9 +1343,9 @@ function App() {
   useEffect(() => {
     localStorage.setItem(
       storageKey,
-      JSON.stringify({ selectedTier, lineQtys, settings, customer, selectedPlanId, renaissance, expanded, toolbarOpen, renaissanceOpen, savedQuotesOpen, financingOpen, activeView, searchTerm, selectedQuoteId, selectedQuoteStatus, quoteScope, quoteStatusFilter })
+      JSON.stringify({ selectedTier, lineQtys, settings, customer, selectedPlanId, renaissance, expanded, toolbarOpen, renaissanceOpen, savedQuotesOpen, financingOpen, activeView, appView, standardPricingOpen, redFlagRules, searchTerm, selectedQuoteId, selectedQuoteStatus, quoteScope, quoteStatusFilter })
     );
-  }, [selectedTier, lineQtys, settings, customer, selectedPlanId, renaissance, expanded, toolbarOpen, renaissanceOpen, savedQuotesOpen, financingOpen, activeView, searchTerm, selectedQuoteId, selectedQuoteStatus, quoteScope, quoteStatusFilter]);
+  }, [selectedTier, lineQtys, settings, customer, selectedPlanId, renaissance, expanded, toolbarOpen, renaissanceOpen, savedQuotesOpen, financingOpen, activeView, appView, standardPricingOpen, redFlagRules, searchTerm, selectedQuoteId, selectedQuoteStatus, quoteScope, quoteStatusFilter]);
 
   const pricingTiers = useMemo(() => Object.fromEntries(Object.entries(appData.pricingTiers).map(([key, tier]) => [key, { ...tier, multiplier: pricingOverrides.tierMultipliers?.[key] ?? tier.multiplier }])), [pricingOverrides.tierMultipliers]);
   const effectiveAppDefaults = useMemo(() => ({ ...appData.defaultSettings, ...pricingOverrides.appDefaults }), [pricingOverrides.appDefaults]);
@@ -1538,7 +1583,7 @@ function App() {
   const standardSubtotal = useMemo(() => lineItems.reduce((sum, item) => sum + item.extended, 0), [lineItems]);
   const subtotal = standardSubtotal + renaissanceCalc.total;
 
-  const locationRules = useMemo(() => getLocationRules(settings.city, settings.county), [settings.city, settings.county]);
+  const locationRules = useMemo(() => getLocationRules(settings.city, settings.county, redFlagRules), [settings.city, settings.county, redFlagRules]);
   const locationFee = locationRules.reduce((sum, rule) => sum + safeNumber(rule.fee), 0);
   const taxableBase = subtotal * effectiveAppDefaults.taxablePortion;
   const salesTax = taxableBase * effectiveAppDefaults.taxRate;
@@ -2246,9 +2291,9 @@ function App() {
     return quoteId;
   }
 
-  function addCurrentQuoteToSchedule() {
+  function addCurrentQuoteToSchedule(quoteIdOverride = selectedQuoteId) {
     const baseDate = formatDateKey(new Date());
-    const newJobs = schedulePlanToJobs(currentSchedulePlan, scheduleJobs, baseDate, selectedQuoteId);
+    const newJobs = schedulePlanToJobs(currentSchedulePlan, scheduleJobs, baseDate, quoteIdOverride);
     if (!newJobs.length) {
       setScheduleMessage("No schedulable work found for this quote.");
       return;
@@ -2294,15 +2339,43 @@ function App() {
     setScheduleJobs((current) => current.filter((job) => job.id !== jobId));
   }
 
+  async function markCurrentQuoteSold() {
+    let quoteId = selectedQuoteId;
+    if (!quoteId) {
+      quoteId = await saveQuote();
+    }
+    if (!quoteId) {
+      setSaveMessage("Save the quote before marking it sold.");
+      return;
+    }
+
+    const { error } = await supabase.from("quotes").update({ status: "sold" }).eq("id", quoteId);
+    if (error) {
+      console.error("Mark sold failed", error);
+      setSaveMessage(`Could not mark sold: ${formatSupabaseError(error, "unknown error")}`);
+      return;
+    }
+
+    setSelectedQuoteId(quoteId);
+    setSelectedQuoteStatus("sold");
+    if (scheduleJobs.some((job) => job.quoteId === quoteId)) {
+      setScheduleMessage("This sold quote is already on the production schedule.");
+    } else {
+      addCurrentQuoteToSchedule(quoteId);
+    }
+    setSaveMessage("Quote saved, marked sold, and added to the production schedule.");
+    await refreshSavedQuotes();
+  }
+
   async function setQuoteStatus(status) {
+    if (status === "sold") {
+      await markCurrentQuoteSold();
+      return;
+    }
+
     if (!selectedQuoteId) {
       setSelectedQuoteStatus(status);
-      if (status === "sold") {
-        addCurrentQuoteToSchedule();
-        setSaveMessage("Quote marked sold and added to the local production schedule. Save the quote to keep the sold status in Saved Quotes.");
-      } else {
-        setSaveMessage(`Quote status set to ${status}. Save the quote to keep it.`);
-      }
+      setSaveMessage(`Quote status set to ${status}. Save the quote to keep it.`);
       return;
     }
 
@@ -2319,9 +2392,6 @@ function App() {
 
     setSelectedQuoteStatus(status);
     setSaveMessage(`Quote marked ${status}.`);
-    if (status === "sold") {
-      addCurrentQuoteToSchedule();
-    }
     await refreshSavedQuotes();
   }
 
@@ -2426,6 +2496,25 @@ async function refreshAdminUsers() {
       setProfile((current) => current ? { ...current, role: nextRole } : current);
     }
     setUserAdminMessage("User role updated.");
+  }
+
+  function updateRedFlagRule(index, field, value) {
+    setRedFlagRules((current) => current.map((rule, ruleIndex) => ruleIndex === index ? { ...rule, [field]: field === "fee" ? value : value } : rule));
+  }
+
+  function addRedFlagRule() {
+    setRedFlagRules((current) => [
+      ...current,
+      { id: `custom-red-flag-${Date.now()}`, label: "New restriction", cityKeywords: "", countyKeywords: "", fee: 0, message: "" }
+    ]);
+  }
+
+  function removeRedFlagRule(index) {
+    setRedFlagRules((current) => current.filter((_, ruleIndex) => ruleIndex !== index));
+  }
+
+  function resetRedFlagRules() {
+    setRedFlagRules(defaultRedFlagRules);
   }
 
   async function handleLogin(event) {
@@ -2597,6 +2686,7 @@ async function refreshAdminUsers() {
             <strong>{profile?.full_name || session.user.email}</strong>
             <span>{formatRole(currentRole)}</span>
           </div>
+          <button className="ghost-btn" onClick={() => setAppView(appView === "calendar" ? "estimate" : "calendar")}>{appView === "calendar" ? "Estimator" : "Calendar"}</button>
           <button className="ghost-btn" onClick={clearAll}>Clear inputs</button>
           <button className="ghost-btn" onClick={() => setSettingsOpen(true)}>Settings</button>
           <button className="ghost-btn" onClick={handleSignOut}>Sign out</button>
@@ -2604,6 +2694,8 @@ async function refreshAdminUsers() {
       </header>
 
 
+      {appView === "estimate" ? (
+        <>
       <section className="toolbar card">
         <div className="section-head compact-head">
           <div>
@@ -2954,15 +3046,22 @@ async function refreshAdminUsers() {
         </section>
       )}
 
-      <section className="card schedule-card collapsible-card">
-        <button className="collapsible-head schedule-head" type="button" onClick={() => setScheduleOpen((value) => !value)} aria-expanded={scheduleOpen}>
-          <span>
-            <strong>Production schedule</strong>
-            <small>Weekday calendar · 2 crews max per day · sold quotes auto-schedule after material lead time.</small>
-          </span>
-          <span className="saved-count-pill">{scheduleJobs.length} phase{scheduleJobs.length === 1 ? "" : "s"} · {scheduleOpen ? "Collapse" : "Open"}</span>
-        </button>
-        {scheduleOpen && (
+        </>
+      ) : null}
+
+      {appView === "calendar" ? (
+      <section className="card schedule-card calendar-view-card">
+        <div className="section-head compact-head schedule-view-head">
+          <div>
+            <h2>Production schedule</h2>
+            <p className="small-note">Weekday calendar · 2 crews max per day · sold quotes auto-schedule after material lead time.</p>
+          </div>
+          <div className="toolbar-buttons inline-actions">
+            <span className="saved-count-pill">{scheduleJobs.length} phase{scheduleJobs.length === 1 ? "" : "s"}</span>
+            <button className="ghost-btn" type="button" onClick={() => setAppView("estimate")}>Back to estimator</button>
+          </div>
+        </div>
+        {true && (
           <div className="schedule-body">
             <div className="schedule-top-grid">
               <div className="schedule-intelligence-panel">
@@ -3035,7 +3134,10 @@ async function refreshAdminUsers() {
           </div>
         )}
       </section>
+      ) : null}
 
+      {appView === "estimate" ? (
+        <>
       {flags.length > 0 && (
         <section className="flag-list card alert">
           <h2>Red flags / restrictions</h2>
@@ -3075,12 +3177,15 @@ async function refreshAdminUsers() {
                   <p className="small-note">Fast-fill layout for on-the-spot quoting. Search, tap quantity, or use the Standard/Renaissance tabs above.</p>
                 </div>
                 <div className="toolbar-buttons inline-actions">
+                  <button className="ghost-btn" onClick={() => setStandardPricingOpen((value) => !value)}>{standardPricingOpen ? "Hide sheet" : "Show sheet"}</button>
                   <button className="ghost-btn" onClick={clearAll}>Clear inputs</button>
                   <button className="ghost-btn" onClick={() => expandAll(true)}>Expand all</button>
                   <button className="ghost-btn" onClick={() => expandAll(false)}>Collapse all</button>
                 </div>
               </div>
 
+              {standardPricingOpen && (
+              <>
               <div className="standard-search-row">
                 <label className="standard-search-label">
                   Search services
@@ -3139,6 +3244,9 @@ async function refreshAdminUsers() {
                   <button key={`bottom-${key}`} className={selectedTier === key ? "pill active" : "pill"} onClick={() => setSelectedTier(key)}>{tier.label}</button>
                 ))}
               </div>
+              </>
+              )}
+              {!standardPricingOpen ? <p className="small-note collapsed-sheet-note">Standard pricing sheet hidden. Use Show sheet when you are ready to edit quantities.</p> : null}
             </>
           ) : (
             <>
@@ -3356,6 +3464,7 @@ async function refreshAdminUsers() {
               </div>
               <div className="toolbar-buttons inline-actions">
                 <button className="ghost-btn" onClick={saveQuote} disabled={saveLoading}>{saveLoading ? "Saving…" : selectedQuoteId ? "Update" : "Save Quote"}</button>
+                <button className="ghost-btn sold-action-btn" onClick={markCurrentQuoteSold} disabled={saveLoading}>{selectedQuoteId ? "Mark Sold" : "Save + Sold"}</button>
                 <button className="ghost-btn" onClick={copySummary}>Copy</button>
                 <button className="ghost-btn" onClick={sendSelectedQuoteToGhl} disabled={ghlSending || !(pricingOverrides?.ghlSettings?.enabled)}> {ghlSending ? "Sending…" : "Send to GoHighLevel"}</button>
                 <button className="ghost-btn danger-btn" onClick={deleteSelectedQuote}>Delete</button>
@@ -3472,6 +3581,8 @@ async function refreshAdminUsers() {
             </section>
           )}
         </aside>
+        </>
+      ) : null}
 
       {settingsOpen && (
         <div className="modal-backdrop" onClick={() => setSettingsOpen(false)}>
@@ -3506,6 +3617,33 @@ async function refreshAdminUsers() {
                 <span>Show cash price</span>
               </label>
             </div>
+
+
+
+            {permissions.canManagePricing && (
+              <div className="help-block section-card settings-redflags-block">
+                <div className="settings-section-head">
+                  <h3>Admin red flags / restrictions</h3>
+                  <p className="small-note">Edit county or city warnings that appear during estimating. Use comma-separated keywords.</p>
+                </div>
+                <div className="redflag-admin-list">
+                  {redFlagRules.map((rule, index) => (
+                    <div className="redflag-admin-row" key={rule.id || index}>
+                      <label>Label<input type="text" value={rule.label || ""} onChange={(e) => updateRedFlagRule(index, "label", e.target.value)} /></label>
+                      <label>City keywords<input type="text" value={rule.cityKeywords || ""} onChange={(e) => updateRedFlagRule(index, "cityKeywords", e.target.value)} placeholder="clarksville, franklin" /></label>
+                      <label>County keywords<input type="text" value={rule.countyKeywords || ""} onChange={(e) => updateRedFlagRule(index, "countyKeywords", e.target.value)} placeholder="montgomery, williamson" /></label>
+                      <label>Fee<input type="number" inputMode="decimal" value={rule.fee ?? 0} onChange={(e) => updateRedFlagRule(index, "fee", e.target.value)} /></label>
+                      <label className="redflag-message-field">Message<textarea rows="2" value={rule.message || ""} onChange={(e) => updateRedFlagRule(index, "message", e.target.value)} /></label>
+                      <button className="ghost-btn danger-btn" type="button" onClick={() => removeRedFlagRule(index)}>Remove</button>
+                    </div>
+                  ))}
+                </div>
+                <div className="toolbar-buttons inline-actions">
+                  <button className="ghost-btn" type="button" onClick={addRedFlagRule}>Add red flag</button>
+                  <button className="ghost-btn" type="button" onClick={resetRedFlagRules}>Reset defaults</button>
+                </div>
+              </div>
+            )}
 
             <div className="help-block section-card settings-access-block">
               <div className="settings-section-head"><h3>Access & visibility</h3><p className="small-note">Review permissions and hide or reveal sensitive details from the live quoting flow.</p></div>
