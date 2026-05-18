@@ -2577,3 +2577,164 @@ button:hover {
 :root[data-theme="dark"] .calendar-job-pill .status-needed {
   color: #fecaca;
 }
+
+/* Job photo documentation */
+.active-nav-btn {
+  border-color: var(--accent, #b3862c) !important;
+  background: rgba(179, 134, 44, 0.14) !important;
+  color: var(--text, #1f1a14) !important;
+}
+
+.photo-view-card {
+  margin-top: 1rem;
+}
+
+.photo-module-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.85fr) minmax(360px, 1.15fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.photo-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.photo-file-label input[type="file"] {
+  padding: 0.85rem;
+  border: 1px dashed var(--border, #ddc99d);
+  border-radius: 14px;
+  background: var(--field-bg, #fffaf0);
+}
+
+.photo-preview,
+.job-photo-card img {
+  width: 100%;
+  border-radius: 16px;
+  border: 1px solid var(--border, #e3d2ad);
+  object-fit: cover;
+  background: #111;
+}
+
+.photo-preview {
+  max-height: 320px;
+  margin: 0.75rem 0;
+}
+
+.photo-empty-preview,
+.photo-drive-placeholder {
+  min-height: 180px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--border, #e3d2ad);
+  border-radius: 16px;
+  background: rgba(179, 134, 44, 0.08);
+  color: var(--muted, #786a55);
+  font-weight: 700;
+  margin: 0.75rem 0;
+}
+
+.photo-actions {
+  margin-top: 0.75rem;
+}
+
+.photo-group-list {
+  display: grid;
+  gap: 0.85rem;
+  margin-top: 0.85rem;
+}
+
+.photo-group {
+  border: 1px solid var(--border, #e3d2ad);
+  border-radius: 16px;
+  overflow: hidden;
+  background: var(--card-bg, #fffdf8);
+}
+
+.photo-group-head span {
+  display: grid;
+  gap: 0.25rem;
+  text-align: left;
+}
+
+.photo-group-head small {
+  color: var(--muted, #786a55);
+  font-weight: 600;
+}
+
+.photo-card-grid {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.85rem;
+}
+
+.job-photo-card {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr) auto;
+  gap: 0.85rem;
+  align-items: start;
+  padding: 0.75rem;
+  border: 1px solid var(--border-soft, #eadfc7);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.job-photo-card img,
+.photo-drive-placeholder {
+  height: 115px;
+  margin: 0;
+}
+
+.job-photo-card div:nth-child(2) {
+  display: grid;
+  gap: 0.22rem;
+  min-width: 0;
+}
+
+.job-photo-card strong {
+  overflow-wrap: anywhere;
+}
+
+.job-photo-card span,
+.job-photo-card p {
+  color: var(--muted, #786a55);
+  font-size: 0.88rem;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.status-message.error {
+  color: #a82727;
+  border-color: rgba(168, 39, 39, 0.35);
+  background: rgba(168, 39, 39, 0.08);
+}
+
+[data-theme="dark"] .active-nav-btn {
+  color: #ffe4a8 !important;
+  background: rgba(210, 165, 70, 0.22) !important;
+}
+
+[data-theme="dark"] .photo-group,
+[data-theme="dark"] .job-photo-card {
+  background: rgba(32, 28, 22, 0.92);
+}
+
+[data-theme="dark"] .photo-empty-preview,
+[data-theme="dark"] .photo-drive-placeholder {
+  color: #ffe4a8;
+  background: rgba(210, 165, 70, 0.12);
+}
+
+@media (max-width: 900px) {
+  .photo-module-grid,
+  .photo-form-grid,
+  .job-photo-card {
+    grid-template-columns: 1fr;
+  }
+  .job-photo-card img,
+  .photo-drive-placeholder {
+    height: 220px;
+  }
+}

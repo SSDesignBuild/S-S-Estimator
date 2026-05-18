@@ -425,6 +425,103 @@ function scheduleStatusText(job) {
   return notes.join(" · ") || "Material ordered · Delivery scheduled";
 }
 
+const photoStorageKey = "sns-design-build-job-photos-v1";
+
+function sanitizeFilePart(value, fallback = "job") {
+  const cleaned = safeString(value, fallback)
+    .replace(/[^a-z0-9 _.-]/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned || fallback;
+}
+
+function gpsKey(latitude, longitude) {
+  const lat = Number(latitude);
+  const lng = Number(longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return "no-location";
+  return `${lat.toFixed(4)},${lng.toFixed(4)}`;
+}
+
+function photoGroupKey(photo) {
+  const address = safeString(photo?.address).trim().toLowerCase();
+  if (address) return `address:${address}`;
+  return `gps:${gpsKey(photo?.latitude, photo?.longitude)}`;
+}
+
+function photoGroupTitle(photo) {
+  const job = safeString(photo?.jobName || photo?.job_name, "Job photos").trim() || "Job photos";
+  const address = safeString(photo?.address).trim();
+  const gps = gpsKey(photo?.latitude, photo?.longitude);
+  return address ? `${job} — ${address}` : `${job} — ${gps}`;
+}
+
+function normalizeJobPhoto(photo) {
+  return {
+    id: safeString(photo?.id || `photo-${Date.now()}-${Math.random().toString(16).slice(2)}`),
+    jobName: safeString(photo?.jobName || photo?.job_name || "Job photos"),
+    address: safeString(photo?.address || ""),
+    takenAt: safeString(photo?.takenAt || photo?.taken_at || new Date().toISOString()),
+    latitude: photo?.latitude ?? null,
+    longitude: photo?.longitude ?? null,
+    note: safeString(photo?.note || ""),
+    fileName: safeString(photo?.fileName || photo?.file_name || "job-photo.jpg"),
+    driveFileId: safeString(photo?.driveFileId || photo?.drive_file_id || ""),
+    driveUrl: safeString(photo?.driveUrl || photo?.drive_url || ""),
+    driveFolderName: safeString(photo?.driveFolderName || photo?.drive_folder_name || ""),
+    thumbDataUrl: safeString(photo?.thumbDataUrl || photo?.thumb_data_url || ""),
+    uploadedBy: safeString(photo?.uploadedBy || photo?.uploaded_by || ""),
+    createdAt: safeString(photo?.createdAt || photo?.created_at || new Date().toISOString())
+  };
+}
+
+function getCurrentPositionSafe() {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) {
+      resolve({ latitude: null, longitude: null, error: "Location is not available on this device." });
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => resolve({ latitude: position.coords.latitude, longitude: position.coords.longitude, error: "" }),
+      (error) => resolve({ latitude: null, longitude: null, error: error?.message || "Location permission was not granted." }),
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 }
+    );
+  });
+}
+
+function fileToStampedPhoto(file, labelLines) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Could not read selected photo."));
+    reader.onload = () => {
+      const image = new Image();
+      image.onerror = () => reject(new Error("Selected file is not a readable image."));
+      image.onload = () => {
+        const maxSide = 1800;
+        const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
+        const width = Math.max(1, Math.round(image.width * scale));
+        const height = Math.max(1, Math.round(image.height * scale));
+        const footer = Math.max(120, Math.round(height * 0.14));
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(image, 0, 0, width, height);
+        ctx.fillStyle = "rgba(0, 0, 0, 0.72)";
+        ctx.fillRect(0, height - footer, width, footer);
+        ctx.fillStyle = "#ffffff";
+        ctx.font = `${Math.max(22, Math.round(width / 45))}px Arial, sans-serif`;
+        ctx.textBaseline = "top";
+        const left = Math.max(18, Math.round(width * 0.025));
+        const lineHeight = Math.max(28, Math.round(width / 34));
+        labelLines.slice(0, 4).forEach((line, index) => ctx.fillText(safeString(line), left, height - footer + 14 + index * lineHeight, width - left * 2));
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.86);
+        resolve({ dataUrl, base64: dataUrl.split(",")[1], mimeType: "image/jpeg" });
+      };
+      image.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 function unitMeasurementText(unit) {
   const normalized = safeString(unit, "").toLowerCase();
@@ -1271,6 +1368,15 @@ function App() {
   const [scheduleSearch, setScheduleSearch] = useState("");
   const [editingScheduleJobId, setEditingScheduleJobId] = useState(null);
   const [scheduleEditDraft, setScheduleEditDraft] = useState(null);
+  const [jobPhotos, setJobPhotos] = useState([]);
+  const [photosLoading, setPhotosLoading] = useState(false);
+  const [photoUploading, setPhotoUploading] = useState(false);
+  const [photoMessage, setPhotoMessage] = useState("");
+  const [photoFile, setPhotoFile] = useState(null);
+  const [photoPreview, setPhotoPreview] = useState("");
+  const [photoSearch, setPhotoSearch] = useState("");
+  const [photoGroupsOpen, setPhotoGroupsOpen] = useState({});
+  const [photoForm, setPhotoForm] = useState({ jobName: "", address: "", note: "" });
 
   useEffect(() => {
     let isMounted = true;
@@ -1382,7 +1488,7 @@ function App() {
       if (typeof parsed.savedQuotesOpen === "boolean") setSavedQuotesOpen(parsed.savedQuotesOpen !== false);
       if (typeof parsed.financingOpen === "boolean") setFinancingOpen(parsed.financingOpen);
       if (["standard", "renaissance"].includes(parsed.activeView)) setActiveView(parsed.activeView);
-      if (["estimate", "calendar"].includes(parsed.appView)) setAppView(parsed.appView);
+      if (["estimate", "calendar", "photos"].includes(parsed.appView)) setAppView(parsed.appView);
       if (typeof parsed.standardPricingOpen === "boolean") setStandardPricingOpen(parsed.standardPricingOpen);
       if (Array.isArray(parsed.redFlagRules)) setRedFlagRules(parsed.redFlagRules);
       if (typeof parsed.searchTerm === "string") setSearchTerm(parsed.searchTerm);
@@ -1408,6 +1514,29 @@ function App() {
   useEffect(() => {
     localStorage.setItem(scheduleStorageKey, JSON.stringify(scheduleJobs));
   }, [scheduleJobs]);
+
+  useEffect(() => {
+    try {
+      const savedPhotos = JSON.parse(localStorage.getItem(photoStorageKey) || "[]");
+      if (Array.isArray(savedPhotos)) setJobPhotos(savedPhotos.map(normalizeJobPhoto));
+    } catch (err) {
+      console.error("Failed to load local job photos", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(photoStorageKey, JSON.stringify(jobPhotos.slice(0, 250)));
+  }, [jobPhotos]);
+
+  useEffect(() => {
+    if (appView === "photos") refreshJobPhotos();
+  }, [appView, session?.user?.id]);
+
+  useEffect(() => {
+    if (!photoForm.jobName && customer.name) {
+      setPhotoForm((current) => ({ ...current, jobName: customer.name }));
+    }
+  }, [customer.name]);
 
   useEffect(() => {
     if (scheduleJobs.length) {
@@ -2489,6 +2618,163 @@ function App() {
     if (jobId) moveScheduleJobToDate(jobId, dateKey);
   }
 
+  async function refreshJobPhotos() {
+    if (!session?.user?.id) return;
+    setPhotosLoading(true);
+    const { data, error } = await supabase
+      .from("job_photos")
+      .select("id, job_name, address, taken_at, latitude, longitude, note, file_name, drive_file_id, drive_url, drive_folder_name, uploaded_by, created_at")
+      .order("taken_at", { ascending: false })
+      .limit(500);
+    if (error) {
+      console.warn("Job photo table unavailable or not configured", error);
+      setPhotoMessage("Photo history is using this device until the job_photos table is added in Supabase.");
+      setPhotosLoading(false);
+      return;
+    }
+    const rows = (data || []).map(normalizeJobPhoto);
+    setJobPhotos((current) => {
+      const byId = new Map(current.map((photo) => [photo.id, photo]));
+      rows.forEach((photo) => byId.set(photo.id, { ...byId.get(photo.id), ...photo }));
+      return Array.from(byId.values()).sort((a, b) => new Date(b.takenAt) - new Date(a.takenAt));
+    });
+    setPhotosLoading(false);
+  }
+
+  function handlePhotoFileChange(file) {
+    setPhotoFile(file || null);
+    setPhotoMessage("");
+    if (photoPreview) URL.revokeObjectURL(photoPreview);
+    setPhotoPreview(file ? URL.createObjectURL(file) : "");
+  }
+
+  async function uploadJobPhoto() {
+    if (!photoFile) {
+      setPhotoMessage("Take or choose a photo first.");
+      return;
+    }
+    const jobName = safeString(photoForm.jobName || customer.name, "Job photos").trim() || "Job photos";
+    const address = safeString(photoForm.address).trim();
+    if (!jobName && !address) {
+      setPhotoMessage("Add a job name or address so the photo can be grouped correctly.");
+      return;
+    }
+
+    setPhotoUploading(true);
+    setPhotoMessage("Preparing photo with job name, address, date, and GPS location…");
+
+    const position = await getCurrentPositionSafe();
+    const takenAt = new Date().toISOString();
+    const prettyDate = new Date(takenAt).toLocaleString();
+    const gpsText = position.latitude && position.longitude ? `${position.latitude.toFixed(5)}, ${position.longitude.toFixed(5)}` : "GPS not captured";
+    const labelLines = [
+      `S&S Design Build — ${jobName}`,
+      address ? `Address: ${address}` : `Location: ${gpsText}`,
+      `Taken: ${prettyDate}`,
+      gpsText
+    ];
+
+    try {
+      const stamped = await fileToStampedPhoto(photoFile, labelLines);
+      const safeDate = takenAt.slice(0, 10);
+      const fileName = `${sanitizeFilePart(jobName)} - ${sanitizeFilePart(address || gpsText, "location")} - ${safeDate}.jpg`;
+      const uploadBody = {
+        fileName,
+        mimeType: stamped.mimeType,
+        base64: stamped.base64,
+        jobName,
+        address,
+        takenAt,
+        latitude: position.latitude,
+        longitude: position.longitude,
+        note: photoForm.note || ""
+      };
+
+      setPhotoMessage("Uploading photo to Google Drive…");
+      const { data: driveData, error: driveError } = await supabase.functions.invoke("upload-job-photo", { body: uploadBody });
+      if (driveError) throw driveError;
+
+      const record = normalizeJobPhoto({
+        id: `local-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        jobName,
+        address,
+        takenAt,
+        latitude: position.latitude,
+        longitude: position.longitude,
+        note: photoForm.note || "",
+        fileName,
+        driveFileId: driveData?.fileId || driveData?.id || "",
+        driveUrl: driveData?.webViewLink || driveData?.driveUrl || "",
+        driveFolderName: driveData?.folderName || "",
+        thumbDataUrl: stamped.dataUrl,
+        uploadedBy: session?.user?.email || profile?.email || ""
+      });
+
+      const { data: inserted, error: insertError } = await supabase
+        .from("job_photos")
+        .insert({
+          job_name: record.jobName,
+          address: record.address || null,
+          taken_at: record.takenAt,
+          latitude: record.latitude,
+          longitude: record.longitude,
+          note: record.note || null,
+          file_name: record.fileName,
+          drive_file_id: record.driveFileId || null,
+          drive_url: record.driveUrl || null,
+          drive_folder_name: record.driveFolderName || null,
+          uploaded_by: session?.user?.id || null
+        })
+        .select("id, job_name, address, taken_at, latitude, longitude, note, file_name, drive_file_id, drive_url, drive_folder_name, uploaded_by, created_at")
+        .maybeSingle();
+
+      const finalRecord = inserted ? normalizeJobPhoto({ ...inserted, thumbDataUrl: stamped.dataUrl }) : record;
+      if (insertError) {
+        console.warn("Photo metadata was saved locally only", insertError);
+        setPhotoMessage("Photo uploaded to Google Drive. Metadata is saved on this device until the job_photos table is added.");
+      } else {
+        setPhotoMessage("Photo uploaded to Google Drive and grouped with the job.");
+      }
+      setJobPhotos((current) => [finalRecord, ...current.filter((photo) => photo.id !== finalRecord.id)]);
+      setPhotoFile(null);
+      if (photoPreview) URL.revokeObjectURL(photoPreview);
+      setPhotoPreview("");
+      setPhotoForm((current) => ({ ...current, note: "" }));
+      setPhotoGroupsOpen((current) => ({ ...current, [photoGroupKey(finalRecord)]: true }));
+    } catch (error) {
+      console.error("Photo upload failed", error);
+      setPhotoMessage(`Photo upload failed: ${error?.message || error?.context?.error || "Check the Google Drive Edge Function setup."}`);
+    } finally {
+      setPhotoUploading(false);
+    }
+  }
+
+  async function deleteJobPhoto(photoId) {
+    const confirmed = window.confirm("Remove this photo from the app history? This does not delete the file from Google Drive.");
+    if (!confirmed) return;
+    setJobPhotos((current) => current.filter((photo) => photo.id !== photoId));
+    if (!safeString(photoId).startsWith("local-")) {
+      const { error } = await supabase.from("job_photos").delete().eq("id", photoId);
+      if (error) console.warn("Could not delete job photo metadata", error);
+    }
+  }
+
+  const filteredPhotoGroups = useMemo(() => {
+    const q = photoSearch.trim().toLowerCase();
+    const groups = new Map();
+    jobPhotos.forEach((photoRaw) => {
+      const photo = normalizeJobPhoto(photoRaw);
+      const haystack = `${photo.jobName} ${photo.address} ${photo.note} ${photo.fileName} ${photo.driveFolderName}`.toLowerCase();
+      if (q && !haystack.includes(q)) return;
+      const key = photoGroupKey(photo);
+      if (!groups.has(key)) groups.set(key, { key, title: photoGroupTitle(photo), photos: [], latest: photo.takenAt, address: photo.address });
+      const group = groups.get(key);
+      group.photos.push(photo);
+      if (new Date(photo.takenAt) > new Date(group.latest)) group.latest = photo.takenAt;
+    });
+    return Array.from(groups.values()).sort((a, b) => new Date(b.latest) - new Date(a.latest));
+  }, [jobPhotos, photoSearch]);
+
   async function markCurrentQuoteSold() {
     let quoteId = selectedQuoteId;
     if (!quoteId) {
@@ -2836,7 +3122,9 @@ async function refreshAdminUsers() {
             <strong>{profile?.full_name || session.user.email}</strong>
             <span>{formatRole(currentRole)}</span>
           </div>
-          <button className="ghost-btn" onClick={() => setAppView(appView === "calendar" ? "estimate" : "calendar")}>{appView === "calendar" ? "Estimator" : "Calendar"}</button>
+          <button className={appView === "estimate" ? "ghost-btn active-nav-btn" : "ghost-btn"} onClick={() => setAppView("estimate")}>Estimator</button>
+          <button className={appView === "calendar" ? "ghost-btn active-nav-btn" : "ghost-btn"} onClick={() => setAppView("calendar")}>Calendar</button>
+          <button className={appView === "photos" ? "ghost-btn active-nav-btn" : "ghost-btn"} onClick={() => setAppView("photos")}>Photos</button>
           <button className="ghost-btn" onClick={clearAll}>Clear inputs</button>
           <button className="ghost-btn" onClick={() => setSettingsOpen(true)}>Settings</button>
           <button className="ghost-btn" onClick={handleSignOut}>Sign out</button>
@@ -3381,6 +3669,91 @@ async function refreshAdminUsers() {
           </div>
         ) : null}
       </section>
+      ) : null}
+
+      {appView === "photos" ? (
+        <section className="card photo-view-card">
+          <div className="section-head compact-head photo-view-head">
+            <div>
+              <h2>Job photo documentation</h2>
+              <p className="small-note">Take photos in the app, stamp them with job name/address/date/GPS, group by location, and upload to the S&S Google Drive job-photo folder.</p>
+            </div>
+            <div className="toolbar-buttons inline-actions">
+              <button className="ghost-btn" type="button" onClick={() => setPhotoForm((current) => ({ ...current, jobName: customer.name || current.jobName }))}>Use current quote name</button>
+              <button className="ghost-btn" type="button" onClick={refreshJobPhotos} disabled={photosLoading}>{photosLoading ? "Refreshing…" : "Refresh"}</button>
+            </div>
+          </div>
+
+          <div className="photo-module-grid">
+            <div className="photo-capture-card card slim-card">
+              <h3>Take / upload job photo</h3>
+              <p className="small-note">On iPhone, tap the photo field and choose camera. The uploaded image is stamped before it is sent to Google Drive.</p>
+              <div className="photo-form-grid">
+                <label>Job name<input type="text" value={photoForm.jobName} placeholder="Smith patio cover" onChange={(e) => setPhotoForm((current) => ({ ...current, jobName: e.target.value }))} /></label>
+                <label>Job address<input type="text" value={photoForm.address} placeholder="123 Main St, Clarksville TN" onChange={(e) => setPhotoForm((current) => ({ ...current, address: e.target.value }))} /></label>
+              </div>
+              <label>Photo note<textarea rows="3" value={photoForm.note} placeholder="Before photo, footer location, access note, damage, material delivery, etc." onChange={(e) => setPhotoForm((current) => ({ ...current, note: e.target.value }))} /></label>
+              <label className="photo-file-label">Photo
+                <input type="file" accept="image/*" capture="environment" onChange={(e) => handlePhotoFileChange(e.target.files?.[0])} />
+              </label>
+              {photoPreview ? <img className="photo-preview" src={photoPreview} alt="Selected job photo preview" /> : <div className="photo-empty-preview">No photo selected yet</div>}
+              <div className="toolbar-buttons inline-actions photo-actions">
+                <button className="primary-btn" type="button" onClick={uploadJobPhoto} disabled={photoUploading}>{photoUploading ? "Uploading…" : "Stamp + upload to Drive"}</button>
+                <button className="ghost-btn" type="button" onClick={async () => {
+                  const position = await getCurrentPositionSafe();
+                  setPhotoMessage(position.error ? `Location check: ${position.error}` : `Location ready: ${position.latitude.toFixed(5)}, ${position.longitude.toFixed(5)}`);
+                }}>Check location</button>
+              </div>
+              {photoMessage ? <p className={photoMessage.toLowerCase().includes("failed") ? "status-message error" : "status-message"}>{photoMessage}</p> : null}
+              <p className="small-note">Google Drive upload requires the <code>upload-job-photo</code> Supabase Edge Function and Drive service-account environment variables included in this ZIP.</p>
+            </div>
+
+            <div className="photo-groups-card card slim-card">
+              <div className="section-head compact-head">
+                <div>
+                  <h3>Grouped job photos</h3>
+                  <p className="small-note">Grouped by address first, then GPS location when no address is entered.</p>
+                </div>
+                <span className="saved-count-pill">{jobPhotos.length} photos</span>
+              </div>
+              <input className="schedule-search-input" type="search" placeholder="Search job name, address, notes, folder..." value={photoSearch} onChange={(e) => setPhotoSearch(e.target.value)} />
+              {!filteredPhotoGroups.length ? <p className="small-note">No job photos match this search yet.</p> : null}
+              <div className="photo-group-list">
+                {filteredPhotoGroups.map((group) => {
+                  const open = photoGroupsOpen[group.key] !== false;
+                  return (
+                    <div className="photo-group" key={group.key}>
+                      <button className="collapsible-head photo-group-head" type="button" onClick={() => setPhotoGroupsOpen((current) => ({ ...current, [group.key]: !open }))}>
+                        <span><strong>{group.title}</strong><small>{group.photos.length} photo{group.photos.length === 1 ? "" : "s"} · Latest {new Date(group.latest).toLocaleString()}</small></span>
+                        <strong>{open ? "−" : "+"}</strong>
+                      </button>
+                      {open ? (
+                        <div className="photo-card-grid">
+                          {group.photos.map((photo) => (
+                            <div className="job-photo-card" key={photo.id}>
+                              {photo.thumbDataUrl ? <img src={photo.thumbDataUrl} alt={photo.fileName || "Job photo"} /> : <div className="photo-drive-placeholder">Drive photo</div>}
+                              <div>
+                                <strong>{photo.fileName}</strong>
+                                <span>{new Date(photo.takenAt).toLocaleString()}</span>
+                                {photo.address ? <span>{photo.address}</span> : null}
+                                {photo.latitude && photo.longitude ? <span>GPS: {Number(photo.latitude).toFixed(5)}, {Number(photo.longitude).toFixed(5)}</span> : null}
+                                {photo.note ? <p>{photo.note}</p> : null}
+                              </div>
+                              <div className="toolbar-buttons inline-actions">
+                                {photo.driveUrl ? <a className="ghost-btn" href={photo.driveUrl} target="_blank" rel="noreferrer">Open in Drive</a> : <span className="small-note">Drive link pending</span>}
+                                <button className="ghost-btn danger-btn" type="button" onClick={() => deleteJobPhoto(photo.id)}>Remove</button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </section>
       ) : null}
 
       {appView === "estimate" ? (
