@@ -326,6 +326,8 @@ function schedulePlanToJobs(plan, existingJobs, baseDateKey, quoteId) {
       crewLoad: phase.crewLoad || 1,
       dates,
       note: phase.note || "",
+      materialOrdered: false,
+      deliveryScheduled: false,
       status: "scheduled",
       createdAt: new Date().toISOString()
     };
@@ -351,6 +353,40 @@ function getMonthDays(monthDateKey) {
     days.push({ dateKey: formatDateKey(day), inMonth: day.getMonth() === month, label: day.getDate(), weekday: day.getDay() });
   }
   return days;
+}
+
+
+function daysBetween(dateAKey, dateBKey) {
+  const a = parseDateKey(dateAKey);
+  const b = parseDateKey(dateBKey);
+  a.setHours(0, 0, 0, 0);
+  b.setHours(0, 0, 0, 0);
+  return Math.round((b.getTime() - a.getTime()) / MS_PER_DAY);
+}
+
+function scheduleUrgencyClass(job) {
+  const firstDate = (job?.dates || [])[0];
+  if (!firstDate) return "normal";
+  const delta = daysBetween(formatDateKey(new Date()), firstDate);
+  if (delta >= 0 && delta <= 7) return "urgent";
+  if (delta >= 8 && delta <= 21) return "soon";
+  return "normal";
+}
+
+function normalizeScheduleJob(job) {
+  return {
+    ...job,
+    materialOrdered: Boolean(job?.materialOrdered),
+    deliveryScheduled: Boolean(job?.deliveryScheduled),
+    note: job?.note || ""
+  };
+}
+
+function scheduleStatusText(job) {
+  const notes = [];
+  if (!job?.materialOrdered) notes.push("Material not ordered");
+  if (!job?.deliveryScheduled) notes.push("Delivery not scheduled");
+  return notes.join(" · ") || "Material ordered · Delivery scheduled";
 }
 
 
@@ -1193,8 +1229,12 @@ function App() {
   const [scheduleOpen, setScheduleOpen] = useState(true);
   const [calendarMonth, setCalendarMonth] = useState(formatDateKey(new Date()).slice(0, 7) + "-01");
   const [scheduleMessage, setScheduleMessage] = useState("");
-  const [manualJob, setManualJob] = useState({ title: "", scope: "Patio cover install", startDate: formatDateKey(new Date()), days: 1, note: "" });
+  const [manualJob, setManualJob] = useState({ title: "", scope: "Patio cover install", startDate: formatDateKey(new Date()), days: 1, note: "", materialOrdered: false, deliveryScheduled: false });
   const [redFlagRules, setRedFlagRules] = useState(defaultRedFlagRules);
+  const [scheduledListOpen, setScheduledListOpen] = useState(true);
+  const [scheduleSearch, setScheduleSearch] = useState("");
+  const [editingScheduleJobId, setEditingScheduleJobId] = useState(null);
+  const [scheduleEditDraft, setScheduleEditDraft] = useState(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -1323,7 +1363,7 @@ function App() {
   useEffect(() => {
     try {
       const savedSchedule = JSON.parse(localStorage.getItem(scheduleStorageKey) || "[]");
-      if (Array.isArray(savedSchedule)) setScheduleJobs(savedSchedule);
+      if (Array.isArray(savedSchedule)) setScheduleJobs(savedSchedule.map(normalizeScheduleJob));
     } catch (err) {
       console.error("Failed to load schedule", err);
     }
@@ -1711,11 +1751,21 @@ function App() {
     scheduleJobs.forEach((job) => {
       (job.dates || []).forEach((dateKey) => {
         if (!map[dateKey]) map[dateKey] = [];
-        map[dateKey].push(job);
+        map[dateKey].push(normalizeScheduleJob(job));
       });
+    });
+    Object.keys(map).forEach((dateKey) => {
+      map[dateKey].sort((a, b) => safeString(a.title).localeCompare(safeString(b.title)));
     });
     return map;
   }, [scheduleJobs]);
+
+  const filteredScheduleJobs = useMemo(() => {
+    const needle = scheduleSearch.trim().toLowerCase();
+    const sorted = scheduleJobs.slice().map(normalizeScheduleJob).sort((a, b) => (a.dates?.[0] || "").localeCompare(b.dates?.[0] || ""));
+    if (!needle) return sorted;
+    return sorted.filter((job) => `${job.title || ""} ${job.phaseName || ""} ${(job.scopes || []).join(" ")} ${job.note || ""} ${(job.dates || []).join(" ")}`.toLowerCase().includes(needle));
+  }, [scheduleJobs, scheduleSearch]);
 
   const lineCount = activeItems.length + (renaissanceCalc.total > 0 ? 1 : 0);
 
@@ -2321,6 +2371,8 @@ function App() {
       crewLoad: 1,
       dates: block,
       note: manualJob.note || "Manual calendar entry.",
+      materialOrdered: Boolean(manualJob.materialOrdered),
+      deliveryScheduled: Boolean(manualJob.deliveryScheduled),
       status: "scheduled",
       createdAt: new Date().toISOString()
     };
@@ -2328,7 +2380,7 @@ function App() {
     setScheduleOpen(true);
     setCalendarMonth(block[0].slice(0, 7) + "-01");
     setScheduleMessage(`Manual job scheduled: ${scope} on ${block[0]}${block.length > 1 ? ` to ${block.at(-1)}` : ""}.`);
-    setManualJob((current) => ({ ...current, title: "", note: "" }));
+    setManualJob((current) => ({ ...current, title: "", note: "", materialOrdered: false, deliveryScheduled: false }));
   }
 
   function updateScheduleJob(jobId, field, value) {
@@ -2337,6 +2389,66 @@ function App() {
 
   function removeScheduleJob(jobId) {
     setScheduleJobs((current) => current.filter((job) => job.id !== jobId));
+  }
+
+  function openScheduleEditor(job) {
+    const normalized = normalizeScheduleJob(job);
+    setEditingScheduleJobId(normalized.id);
+    setScheduleEditDraft({
+      title: normalized.title || "",
+      phaseName: normalized.phaseName || "Install",
+      startDate: normalized.dates?.[0] || formatDateKey(new Date()),
+      days: Math.max(1, normalized.dates?.length || 1),
+      note: normalized.note || "",
+      materialOrdered: Boolean(normalized.materialOrdered),
+      deliveryScheduled: Boolean(normalized.deliveryScheduled)
+    });
+  }
+
+  function closeScheduleEditor() {
+    setEditingScheduleJobId(null);
+    setScheduleEditDraft(null);
+  }
+
+  function saveScheduleEditor() {
+    if (!editingScheduleJobId || !scheduleEditDraft) return;
+    const others = scheduleJobs.filter((job) => job.id !== editingScheduleJobId);
+    const startDate = scheduleEditDraft.startDate || formatDateKey(new Date());
+    const days = Math.max(1, Math.ceil(Number(scheduleEditDraft.days) || 1));
+    const dates = firstAvailableWorkBlock(others, startDate, days);
+    setScheduleJobs((current) => current.map((job) => job.id === editingScheduleJobId ? {
+      ...job,
+      title: scheduleEditDraft.title.trim() || job.title,
+      phaseName: scheduleEditDraft.phaseName.trim() || job.phaseName,
+      dates,
+      note: scheduleEditDraft.note || "",
+      materialOrdered: Boolean(scheduleEditDraft.materialOrdered),
+      deliveryScheduled: Boolean(scheduleEditDraft.deliveryScheduled),
+      updatedAt: new Date().toISOString()
+    } : job));
+    setCalendarMonth((dates[0] || calendarMonth).slice(0, 7) + "-01");
+    setScheduleMessage(`Updated ${scheduleEditDraft.title || "scheduled job"} for ${dates[0]}${dates.length > 1 ? ` to ${dates.at(-1)}` : ""}.`);
+    closeScheduleEditor();
+  }
+
+  function moveScheduleJobToDate(jobId, targetDateKey) {
+    if (!isWeekday(targetDateKey)) {
+      setScheduleMessage("Jobs can only be scheduled Monday through Friday.");
+      return;
+    }
+    const movingJob = scheduleJobs.find((job) => job.id === jobId);
+    if (!movingJob) return;
+    const others = scheduleJobs.filter((job) => job.id !== jobId);
+    const days = Math.max(1, movingJob.dates?.length || 1);
+    const dates = firstAvailableWorkBlock(others, targetDateKey, days);
+    setScheduleJobs((current) => current.map((job) => job.id === jobId ? { ...job, dates, updatedAt: new Date().toISOString() } : job));
+    setScheduleMessage(`${movingJob.title} moved to ${dates[0]}${dates[0] !== targetDateKey ? " because the selected day was full." : ""}`);
+  }
+
+  function handleScheduleDrop(event, dateKey) {
+    event.preventDefault();
+    const jobId = event.dataTransfer.getData("text/schedule-job-id");
+    if (jobId) moveScheduleJobToDate(jobId, dateKey);
   }
 
   async function markCurrentQuoteSold() {
@@ -3054,15 +3166,16 @@ async function refreshAdminUsers() {
         <div className="section-head compact-head schedule-view-head">
           <div>
             <h2>Production schedule</h2>
-            <p className="small-note">Weekday calendar · 2 crews max per day · sold quotes auto-schedule after material lead time.</p>
+            <p className="small-note">Weekday calendar · 2 crews max per day · drag jobs to reschedule · tap a job to edit.</p>
           </div>
           <div className="toolbar-buttons inline-actions">
             <span className="saved-count-pill">{scheduleJobs.length} phase{scheduleJobs.length === 1 ? "" : "s"}</span>
             <button className="ghost-btn" type="button" onClick={() => setAppView("estimate")}>Back to estimator</button>
           </div>
         </div>
-        {true && (
-          <div className="schedule-body">
+        <div className="schedule-body">
+          <details className="mobile-calendar-details" open>
+            <summary>Quote scheduling + manual add</summary>
             <div className="schedule-top-grid">
               <div className="schedule-intelligence-panel">
                 <h3>Current quote schedule logic</h3>
@@ -3087,52 +3200,126 @@ async function refreshAdminUsers() {
                   <label>Earliest start<input type="date" value={manualJob.startDate} onChange={(e) => setManualJob((current) => ({ ...current, startDate: e.target.value }))} /></label>
                   <label>Work days<input type="number" min="1" step="1" value={manualJob.days} onChange={(e) => setManualJob((current) => ({ ...current, days: e.target.value }))} /></label>
                 </div>
+                <div className="schedule-check-row">
+                  <label><input type="checkbox" checked={Boolean(manualJob.materialOrdered)} onChange={(e) => setManualJob((current) => ({ ...current, materialOrdered: e.target.checked }))} /> Material ordered</label>
+                  <label><input type="checkbox" checked={Boolean(manualJob.deliveryScheduled)} onChange={(e) => setManualJob((current) => ({ ...current, deliveryScheduled: e.target.checked }))} /> Delivery scheduled</label>
+                </div>
                 <label>Notes<textarea rows="2" value={manualJob.note} placeholder="Crew notes, material notes, access notes..." onChange={(e) => setManualJob((current) => ({ ...current, note: e.target.value }))} /></label>
                 <button className="ghost-btn" type="button" onClick={addManualJobToSchedule}>Add to next available slot</button>
               </div>
             </div>
-            <div className="calendar-toolbar">
-              <button className="ghost-btn" type="button" onClick={() => setCalendarMonth(addCalendarDays(calendarMonth, -32).slice(0, 7) + "-01")}>Previous</button>
-              <h3>{parseDateKey(calendarMonth).toLocaleString(undefined, { month: "long", year: "numeric" })}</h3>
-              <button className="ghost-btn" type="button" onClick={() => setCalendarMonth(addCalendarDays(calendarMonth, 32).slice(0, 7) + "-01")}>Next</button>
-            </div>
+          </details>
+          <div className="calendar-toolbar">
+            <button className="ghost-btn" type="button" onClick={() => setCalendarMonth(addCalendarDays(calendarMonth, -32).slice(0, 7) + "-01")}>Previous</button>
+            <h3>{parseDateKey(calendarMonth).toLocaleString(undefined, { month: "long", year: "numeric" })}</h3>
+            <button className="ghost-btn" type="button" onClick={() => setCalendarMonth(addCalendarDays(calendarMonth, 32).slice(0, 7) + "-01")}>Next</button>
+          </div>
+          <div className="calendar-legend">
+            <span><i className="legend-dot urgent-dot"></i> Within 1 week</span>
+            <span><i className="legend-dot soon-dot"></i> 2–3 weeks out</span>
+            <span><i className="legend-dot material-dot"></i> Material/delivery needs action</span>
+          </div>
+          <div className="calendar-scroll-wrap">
             <div className="calendar-grid">
               {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => <div className="calendar-weekday" key={day}>{day}</div>)}
               {calendarDays.map((day) => {
                 const dayJobs = jobsByDate[day.dateKey] || [];
                 const isBlocked = day.weekday === 0 || day.weekday === 6;
                 return (
-                  <div key={day.dateKey} className={`calendar-day ${day.inMonth ? "" : "muted"} ${isBlocked ? "weekend" : ""} ${dayJobs.length >= 2 ? "full" : ""}`}>
+                  <div
+                    key={day.dateKey}
+                    className={`calendar-day ${day.inMonth ? "" : "muted"} ${isBlocked ? "weekend" : ""} ${dayJobs.length >= 2 ? "full" : ""}`}
+                    onDragOver={(event) => { if (!isBlocked) event.preventDefault(); }}
+                    onDrop={(event) => handleScheduleDrop(event, day.dateKey)}
+                  >
                     <div className="calendar-day-head"><strong>{day.label}</strong><span>{isBlocked ? "Closed" : `${dayJobs.length}/2 crews`}</span></div>
-                    {dayJobs.map((job) => (
-                      <div className="calendar-job-pill" key={`${day.dateKey}-${job.id}`} title={`${job.title} — ${job.phaseName}`}>
-                        <strong>{job.title}</strong>
-                        <span>{job.phaseName}</span>
-                      </div>
-                    ))}
+                    <div className="calendar-day-jobs">
+                      {dayJobs.map((job) => {
+                        const urgency = scheduleUrgencyClass(job);
+                        const needsAction = !job.materialOrdered || !job.deliveryScheduled;
+                        return (
+                          <button
+                            type="button"
+                            draggable={!isBlocked}
+                            onDragStart={(event) => event.dataTransfer.setData("text/schedule-job-id", job.id)}
+                            onClick={() => openScheduleEditor(job)}
+                            className={`calendar-job-pill ${urgency === "urgent" ? "job-urgent" : urgency === "soon" ? "job-soon" : ""} ${needsAction ? "job-needs-action" : ""}`}
+                            key={`${day.dateKey}-${job.id}`}
+                            title={`${job.title} — ${job.phaseName}. ${scheduleStatusText(job)}`}
+                          >
+                            <strong>{job.title}</strong>
+                            <span>{job.phaseName}</span>
+                            <em>{job.materialOrdered ? "✓ Material" : "⚠ Order material"} · {job.deliveryScheduled ? "✓ Delivery" : "⚠ Delivery"}</em>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 );
               })}
             </div>
-            <div className="scheduled-job-list">
-              <h3>Scheduled jobs</h3>
-              {!scheduleJobs.length ? <p className="small-note">No jobs scheduled yet.</p> : null}
-              {scheduleJobs.slice().sort((a, b) => (a.dates?.[0] || "").localeCompare(b.dates?.[0] || "")).map((job) => (
-                <div className="scheduled-job-row" key={job.id}>
-                  <div>
-                    <input className="schedule-edit-title" value={job.title} onChange={(e) => updateScheduleJob(job.id, "title", e.target.value)} />
-                    <span>{job.phaseName} · {(job.dates || []).join(", ")} · {job.scopes?.join(" + ")}</span>
-                    {job.note ? <small>{job.note}</small> : null}
-                  </div>
-                  <div className="toolbar-buttons inline-actions">
-                    <button className="ghost-btn" type="button" onClick={() => setCalendarMonth((job.dates?.[0] || calendarMonth).slice(0, 7) + "-01")}>View</button>
-                    <button className="ghost-btn danger-btn" type="button" onClick={() => removeScheduleJob(job.id)}>Remove</button>
-                  </div>
+          </div>
+          <section className="scheduled-job-list card slim-card">
+            <button className="collapsible-head schedule-list-head" type="button" onClick={() => setScheduledListOpen((value) => !value)}>
+              <span>Scheduled jobs ({filteredScheduleJobs.length})</span>
+              <strong>{scheduledListOpen ? "−" : "+"}</strong>
+            </button>
+            {scheduledListOpen ? (
+              <div className="scheduled-list-body">
+                <input className="schedule-search-input" type="search" placeholder="Search by customer, scope, date, notes..." value={scheduleSearch} onChange={(e) => setScheduleSearch(e.target.value)} />
+                {!filteredScheduleJobs.length ? <p className="small-note">No scheduled jobs match this search.</p> : null}
+                {filteredScheduleJobs.map((job) => {
+                  const urgency = scheduleUrgencyClass(job);
+                  return (
+                    <div className={`scheduled-job-row ${urgency === "urgent" ? "job-urgent-row" : urgency === "soon" ? "job-soon-row" : ""}`} key={job.id}>
+                      <div>
+                        <button className="schedule-row-title" type="button" onClick={() => openScheduleEditor(job)}>{job.title}</button>
+                        <span>{job.phaseName} · {(job.dates || []).join(", ")} · {job.scopes?.join(" + ")}</span>
+                        <small className={!job.materialOrdered || !job.deliveryScheduled ? "schedule-action-warning" : ""}>{scheduleStatusText(job)}</small>
+                        {job.note ? <small>{job.note}</small> : null}
+                      </div>
+                      <div className="toolbar-buttons inline-actions">
+                        <label className="mini-check"><input type="checkbox" checked={Boolean(job.materialOrdered)} onChange={(e) => updateScheduleJob(job.id, "materialOrdered", e.target.checked)} /> Material</label>
+                        <label className="mini-check"><input type="checkbox" checked={Boolean(job.deliveryScheduled)} onChange={(e) => updateScheduleJob(job.id, "deliveryScheduled", e.target.checked)} /> Delivery</label>
+                        <button className="ghost-btn" type="button" onClick={() => openScheduleEditor(job)}>Edit</button>
+                        <button className="ghost-btn" type="button" onClick={() => setCalendarMonth((job.dates?.[0] || calendarMonth).slice(0, 7) + "-01")}>View</button>
+                        <button className="ghost-btn danger-btn" type="button" onClick={() => removeScheduleJob(job.id)}>Remove</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+          </section>
+        </div>
+        {editingScheduleJobId && scheduleEditDraft ? (
+          <div className="modal-backdrop" role="dialog" aria-modal="true">
+            <div className="modal-card schedule-edit-modal">
+              <div className="section-head compact-head">
+                <div>
+                  <h2>Edit scheduled job</h2>
+                  <p className="small-note">Changes automatically respect weekday scheduling and the 2-crew daily limit.</p>
                 </div>
-              ))}
+                <button className="ghost-btn" type="button" onClick={closeScheduleEditor}>Close</button>
+              </div>
+              <div className="manual-schedule-grid">
+                <label>Job name<input type="text" value={scheduleEditDraft.title} onChange={(e) => setScheduleEditDraft((current) => ({ ...current, title: e.target.value }))} /></label>
+                <label>Scope<input type="text" value={scheduleEditDraft.phaseName} onChange={(e) => setScheduleEditDraft((current) => ({ ...current, phaseName: e.target.value }))} /></label>
+                <label>Start date<input type="date" value={scheduleEditDraft.startDate} onChange={(e) => setScheduleEditDraft((current) => ({ ...current, startDate: e.target.value }))} /></label>
+                <label>Work days<input type="number" min="1" step="1" value={scheduleEditDraft.days} onChange={(e) => setScheduleEditDraft((current) => ({ ...current, days: e.target.value }))} /></label>
+              </div>
+              <div className="schedule-check-row prominent-checks">
+                <label><input type="checkbox" checked={Boolean(scheduleEditDraft.materialOrdered)} onChange={(e) => setScheduleEditDraft((current) => ({ ...current, materialOrdered: e.target.checked }))} /> Material ordered</label>
+                <label><input type="checkbox" checked={Boolean(scheduleEditDraft.deliveryScheduled)} onChange={(e) => setScheduleEditDraft((current) => ({ ...current, deliveryScheduled: e.target.checked }))} /> Delivery scheduled</label>
+              </div>
+              <label>Notes<textarea rows="4" value={scheduleEditDraft.note} onChange={(e) => setScheduleEditDraft((current) => ({ ...current, note: e.target.value }))} /></label>
+              <div className="toolbar-buttons inline-actions right-actions">
+                <button className="ghost-btn danger-btn" type="button" onClick={() => { removeScheduleJob(editingScheduleJobId); closeScheduleEditor(); }}>Remove job</button>
+                <button className="primary-btn" type="button" onClick={saveScheduleEditor}>Save schedule changes</button>
+              </div>
             </div>
           </div>
-        )}
+        ) : null}
       </section>
       ) : null}
 

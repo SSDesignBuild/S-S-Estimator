@@ -2272,3 +2272,247 @@ button:hover {
     overflow-x: auto;
   }
 }
+
+/* v24x mobile calendar, dark-mode readability, drag/edit job status */
+:root[data-theme="dark"] .schedule-intelligence-panel,
+:root[data-theme="dark"] .manual-schedule-panel,
+:root[data-theme="dark"] .scheduled-job-row,
+:root[data-theme="dark"] .scheduled-job-list,
+:root[data-theme="dark"] .calendar-day {
+  background: #241f1a;
+  border-color: #574935;
+  color: var(--ink);
+}
+:root[data-theme="dark"] .schedule-plan-box {
+  background: rgba(44, 120, 88, 0.25);
+  border-color: rgba(110, 231, 183, 0.35);
+}
+:root[data-theme="dark"] input,
+:root[data-theme="dark"] select,
+:root[data-theme="dark"] textarea {
+  background: #fffaf0;
+  color: #1f1a14;
+  border-color: #8b7657;
+}
+:root[data-theme="dark"] input::placeholder,
+:root[data-theme="dark"] textarea::placeholder {
+  color: #6d6257;
+}
+:root[data-theme="dark"] .calendar-day.weekend {
+  background: #2a2926;
+}
+:root[data-theme="dark"] .calendar-weekday,
+:root[data-theme="dark"] .calendar-day-head span,
+:root[data-theme="dark"] .calendar-job-pill span,
+:root[data-theme="dark"] .scheduled-job-row span,
+:root[data-theme="dark"] .scheduled-job-row small,
+:root[data-theme="dark"] .small-note {
+  color: #e6dcc8;
+}
+.calendar-scroll-wrap {
+  width: 100%;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  -webkit-overflow-scrolling: touch;
+}
+.calendar-day-jobs {
+  display: grid;
+  gap: 0.35rem;
+}
+.calendar-job-pill {
+  width: 100%;
+  text-align: left;
+  cursor: grab;
+  color: #1f2937;
+}
+.calendar-job-pill:active { cursor: grabbing; }
+.calendar-job-pill em {
+  font-style: normal;
+  font-size: 0.66rem;
+  color: #7c2d12;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.calendar-job-pill.job-urgent,
+.job-urgent-row {
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
+.calendar-job-pill.job-soon,
+.job-soon-row {
+  background: #fef3c7;
+  border-color: #facc15;
+}
+.calendar-job-pill.job-needs-action {
+  box-shadow: inset 4px 0 0 #dc2626;
+}
+:root[data-theme="dark"] .calendar-job-pill.job-urgent,
+:root[data-theme="dark"] .job-urgent-row {
+  background: #7f1d1d;
+  border-color: #fca5a5;
+  color: #fff7ed;
+}
+:root[data-theme="dark"] .calendar-job-pill.job-soon,
+:root[data-theme="dark"] .job-soon-row {
+  background: #78350f;
+  border-color: #fde68a;
+  color: #fffbeb;
+}
+:root[data-theme="dark"] .calendar-job-pill em {
+  color: #fde68a;
+}
+.calendar-legend,
+.schedule-check-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+}
+.calendar-legend span,
+.schedule-check-row label,
+.mini-check {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+  border: 1px solid var(--line);
+  background: color-mix(in oklab, var(--card) 88%, var(--gold) 12%);
+  border-radius: 999px;
+  padding: 0.45rem 0.65rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+.legend-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  display: inline-block;
+  border: 1px solid rgba(0,0,0,.12);
+}
+.urgent-dot { background: #fee2e2; }
+.soon-dot { background: #fef3c7; }
+.material-dot { background: #dc2626; }
+.scheduled-job-list.slim-card {
+  padding: 0;
+  overflow: hidden;
+}
+.schedule-list-head {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: color-mix(in oklab, var(--gold) 12%, var(--card) 88%);
+  padding: 0.9rem 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 900;
+}
+.scheduled-list-body {
+  display: grid;
+  gap: 0.7rem;
+  padding: 1rem;
+}
+.schedule-search-input {
+  width: 100%;
+}
+.schedule-row-title {
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  padding: 0;
+  text-align: left;
+  font-weight: 900;
+  cursor: pointer;
+}
+.schedule-action-warning {
+  color: #b91c1c !important;
+  font-weight: 900;
+}
+.prominent-checks label {
+  border-radius: 14px;
+  padding: 0.7rem 0.85rem;
+}
+.schedule-edit-modal {
+  width: min(720px, calc(100vw - 24px));
+  display: grid;
+  gap: 1rem;
+}
+.schedule-edit-modal textarea {
+  width: 100%;
+}
+.right-actions { justify-content: flex-end; }
+.mobile-calendar-details summary {
+  cursor: pointer;
+  font-weight: 900;
+  padding: 0.75rem 0;
+}
+.mobile-calendar-details[open] summary {
+  margin-bottom: 0.5rem;
+}
+@media (max-width: 760px) {
+  .calendar-view-card {
+    padding: 12px;
+    border-radius: 18px;
+  }
+  .schedule-view-head,
+  .calendar-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .calendar-toolbar {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+  }
+  .calendar-toolbar h3 {
+    text-align: center;
+    align-self: center;
+    font-size: 1rem;
+  }
+  .calendar-grid {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: repeat(7, minmax(42px, 1fr));
+    gap: 0.25rem;
+  }
+  .calendar-weekday {
+    font-size: 0.65rem;
+  }
+  .calendar-day {
+    min-height: 84px;
+    border-radius: 10px;
+    padding: 0.3rem;
+  }
+  .calendar-day-head {
+    font-size: 0.68rem;
+  }
+  .calendar-day-head span {
+    display: none;
+  }
+  .calendar-job-pill {
+    padding: 0.28rem;
+    border-radius: 8px;
+    font-size: 0.62rem;
+  }
+  .calendar-job-pill span,
+  .calendar-job-pill em {
+    display: none;
+  }
+  .schedule-top-grid,
+  .manual-schedule-grid,
+  .scheduled-job-row {
+    grid-template-columns: 1fr !important;
+  }
+  .scheduled-job-row .inline-actions {
+    justify-content: flex-start;
+  }
+  .calendar-legend span,
+  .schedule-check-row label,
+  .mini-check {
+    font-size: 0.75rem;
+    padding: 0.4rem 0.5rem;
+  }
+  .schedule-body {
+    overflow-x: visible !important;
+  }
+}
