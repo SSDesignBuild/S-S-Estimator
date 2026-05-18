@@ -2516,3 +2516,48 @@ button:hover {
     overflow-x: visible !important;
   }
 }
+
+/* v24x admin capacity override and completion feedback */
+.calendar-day.overbooked {
+  border-color: #7c3aed;
+  box-shadow: inset 0 0 0 2px rgba(124, 58, 237, 0.3);
+}
+.calendar-day.overbooked .calendar-day-head span {
+  color: #6d28d9;
+  font-weight: 900;
+}
+:root[data-theme="dark"] .calendar-day.overbooked .calendar-day-head span {
+  color: #d8b4fe;
+}
+.status-done {
+  color: #047857;
+  font-weight: 900;
+}
+.status-needed {
+  color: #b91c1c;
+  font-weight: 900;
+}
+:root[data-theme="dark"] .status-done {
+  color: #86efac;
+}
+:root[data-theme="dark"] .status-needed {
+  color: #fecaca;
+}
+.status-check.done,
+.mini-check.done {
+  border-color: rgba(5, 150, 105, 0.45);
+  background: rgba(16, 185, 129, 0.16);
+  color: #047857;
+}
+.status-check.done input,
+.mini-check.done input,
+.schedule-check-row input:checked,
+.mini-check input:checked {
+  accent-color: #059669;
+}
+:root[data-theme="dark"] .status-check.done,
+:root[data-theme="dark"] .mini-check.done {
+  color: #bbf7d0;
+  border-color: rgba(134, 239, 172, 0.55);
+  background: rgba(22, 101, 52, 0.35);
+}

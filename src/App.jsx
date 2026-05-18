@@ -284,12 +284,18 @@ function latestScheduledDate(jobs) {
   return dates.sort().at(-1);
 }
 
-function hasCrewCapacity(jobs, dateKey) {
-  const load = jobs.reduce((sum, job) => sum + ((job.dates || []).includes(dateKey) ? Number(job.crewLoad || 1) : 0), 0);
-  return load < 2;
+function scheduledCrewLoad(jobs, dateKey) {
+  return jobs.reduce((sum, job) => sum + ((job.dates || []).includes(dateKey) ? Number(job.crewLoad || 1) : 0), 0);
 }
 
-function firstAvailableWorkBlock(jobs, earliestDateKey, days) {
+function hasCrewCapacity(jobs, dateKey, capacity = 2) {
+  return scheduledCrewLoad(jobs, dateKey) < capacity;
+}
+
+function firstAvailableWorkBlock(jobs, earliestDateKey, days, options = {}) {
+  const allowOverbook = Boolean(options.allowOverbook);
+  if (allowOverbook) return addWorkdays(earliestDateKey, days);
+
   let cursor = nextWeekday(earliestDateKey);
   let guard = 0;
   while (guard < 730) {
@@ -2415,7 +2421,8 @@ function App() {
     const others = scheduleJobs.filter((job) => job.id !== editingScheduleJobId);
     const startDate = scheduleEditDraft.startDate || formatDateKey(new Date());
     const days = Math.max(1, Math.ceil(Number(scheduleEditDraft.days) || 1));
-    const dates = firstAvailableWorkBlock(others, startDate, days);
+    const adminOverride = permissions.canManagePricing;
+    const dates = firstAvailableWorkBlock(others, startDate, days, { allowOverbook: adminOverride });
     setScheduleJobs((current) => current.map((job) => job.id === editingScheduleJobId ? {
       ...job,
       title: scheduleEditDraft.title.trim() || job.title,
@@ -2427,7 +2434,7 @@ function App() {
       updatedAt: new Date().toISOString()
     } : job));
     setCalendarMonth((dates[0] || calendarMonth).slice(0, 7) + "-01");
-    setScheduleMessage(`Updated ${scheduleEditDraft.title || "scheduled job"} for ${dates[0]}${dates.length > 1 ? ` to ${dates.at(-1)}` : ""}.`);
+    setScheduleMessage(`Updated ${scheduleEditDraft.title || "scheduled job"} for ${dates[0]}${dates.length > 1 ? ` to ${dates.at(-1)}` : ""}.${adminOverride ? " Admin capacity override allowed." : ""}`);
     closeScheduleEditor();
   }
 
@@ -2440,9 +2447,10 @@ function App() {
     if (!movingJob) return;
     const others = scheduleJobs.filter((job) => job.id !== jobId);
     const days = Math.max(1, movingJob.dates?.length || 1);
-    const dates = firstAvailableWorkBlock(others, targetDateKey, days);
+    const adminOverride = permissions.canManagePricing;
+    const dates = firstAvailableWorkBlock(others, targetDateKey, days, { allowOverbook: adminOverride });
     setScheduleJobs((current) => current.map((job) => job.id === jobId ? { ...job, dates, updatedAt: new Date().toISOString() } : job));
-    setScheduleMessage(`${movingJob.title} moved to ${dates[0]}${dates[0] !== targetDateKey ? " because the selected day was full." : ""}`);
+    setScheduleMessage(`${movingJob.title} moved to ${dates[0]}${dates[0] !== targetDateKey ? " because the selected day was full." : ""}${adminOverride && dates[0] === targetDateKey ? " Admin capacity override allowed." : ""}`);
   }
 
   function handleScheduleDrop(event, dateKey) {
@@ -3201,8 +3209,8 @@ async function refreshAdminUsers() {
                   <label>Work days<input type="number" min="1" step="1" value={manualJob.days} onChange={(e) => setManualJob((current) => ({ ...current, days: e.target.value }))} /></label>
                 </div>
                 <div className="schedule-check-row">
-                  <label><input type="checkbox" checked={Boolean(manualJob.materialOrdered)} onChange={(e) => setManualJob((current) => ({ ...current, materialOrdered: e.target.checked }))} /> Material ordered</label>
-                  <label><input type="checkbox" checked={Boolean(manualJob.deliveryScheduled)} onChange={(e) => setManualJob((current) => ({ ...current, deliveryScheduled: e.target.checked }))} /> Delivery scheduled</label>
+                  <label className={manualJob.materialOrdered ? "status-check done" : "status-check"}><input type="checkbox" checked={Boolean(manualJob.materialOrdered)} onChange={(e) => setManualJob((current) => ({ ...current, materialOrdered: e.target.checked }))} /> Material ordered</label>
+                  <label className={manualJob.deliveryScheduled ? "status-check done" : "status-check"}><input type="checkbox" checked={Boolean(manualJob.deliveryScheduled)} onChange={(e) => setManualJob((current) => ({ ...current, deliveryScheduled: e.target.checked }))} /> Delivery scheduled</label>
                 </div>
                 <label>Notes<textarea rows="2" value={manualJob.note} placeholder="Crew notes, material notes, access notes..." onChange={(e) => setManualJob((current) => ({ ...current, note: e.target.value }))} /></label>
                 <button className="ghost-btn" type="button" onClick={addManualJobToSchedule}>Add to next available slot</button>
@@ -3228,11 +3236,11 @@ async function refreshAdminUsers() {
                 return (
                   <div
                     key={day.dateKey}
-                    className={`calendar-day ${day.inMonth ? "" : "muted"} ${isBlocked ? "weekend" : ""} ${dayJobs.length >= 2 ? "full" : ""}`}
+                    className={`calendar-day ${day.inMonth ? "" : "muted"} ${isBlocked ? "weekend" : ""} ${dayJobs.length >= 2 ? "full" : ""} ${dayJobs.length > 2 ? "overbooked" : ""}`}
                     onDragOver={(event) => { if (!isBlocked) event.preventDefault(); }}
                     onDrop={(event) => handleScheduleDrop(event, day.dateKey)}
                   >
-                    <div className="calendar-day-head"><strong>{day.label}</strong><span>{isBlocked ? "Closed" : `${dayJobs.length}/2 crews`}</span></div>
+                    <div className="calendar-day-head"><strong>{day.label}</strong><span>{isBlocked ? "Closed" : `${dayJobs.length}/2 crews${dayJobs.length > 2 ? " · admin override" : ""}`}</span></div>
                     <div className="calendar-day-jobs">
                       {dayJobs.map((job) => {
                         const urgency = scheduleUrgencyClass(job);
@@ -3249,7 +3257,7 @@ async function refreshAdminUsers() {
                           >
                             <strong>{job.title}</strong>
                             <span>{job.phaseName}</span>
-                            <em>{job.materialOrdered ? "✓ Material" : "⚠ Order material"} · {job.deliveryScheduled ? "✓ Delivery" : "⚠ Delivery"}</em>
+                            <em><span className={job.materialOrdered ? "status-done" : "status-needed"}>{job.materialOrdered ? "✓ Material" : "⚠ Order material"}</span> · <span className={job.deliveryScheduled ? "status-done" : "status-needed"}>{job.deliveryScheduled ? "✓ Delivery" : "⚠ Delivery"}</span></em>
                           </button>
                         );
                       })}
@@ -3279,8 +3287,8 @@ async function refreshAdminUsers() {
                         {job.note ? <small>{job.note}</small> : null}
                       </div>
                       <div className="toolbar-buttons inline-actions">
-                        <label className="mini-check"><input type="checkbox" checked={Boolean(job.materialOrdered)} onChange={(e) => updateScheduleJob(job.id, "materialOrdered", e.target.checked)} /> Material</label>
-                        <label className="mini-check"><input type="checkbox" checked={Boolean(job.deliveryScheduled)} onChange={(e) => updateScheduleJob(job.id, "deliveryScheduled", e.target.checked)} /> Delivery</label>
+                        <label className={`mini-check ${job.materialOrdered ? "done" : ""}`}><input type="checkbox" checked={Boolean(job.materialOrdered)} onChange={(e) => updateScheduleJob(job.id, "materialOrdered", e.target.checked)} /> Material</label>
+                        <label className={`mini-check ${job.deliveryScheduled ? "done" : ""}`}><input type="checkbox" checked={Boolean(job.deliveryScheduled)} onChange={(e) => updateScheduleJob(job.id, "deliveryScheduled", e.target.checked)} /> Delivery</label>
                         <button className="ghost-btn" type="button" onClick={() => openScheduleEditor(job)}>Edit</button>
                         <button className="ghost-btn" type="button" onClick={() => setCalendarMonth((job.dates?.[0] || calendarMonth).slice(0, 7) + "-01")}>View</button>
                         <button className="ghost-btn danger-btn" type="button" onClick={() => removeScheduleJob(job.id)}>Remove</button>
@@ -3298,7 +3306,7 @@ async function refreshAdminUsers() {
               <div className="section-head compact-head">
                 <div>
                   <h2>Edit scheduled job</h2>
-                  <p className="small-note">Changes automatically respect weekday scheduling and the 2-crew daily limit.</p>
+                  <p className="small-note">Admins may intentionally override the 2-crew daily limit by dragging or editing. All other users stay limited to 2 jobs per weekday.</p>
                 </div>
                 <button className="ghost-btn" type="button" onClick={closeScheduleEditor}>Close</button>
               </div>
@@ -3309,8 +3317,8 @@ async function refreshAdminUsers() {
                 <label>Work days<input type="number" min="1" step="1" value={scheduleEditDraft.days} onChange={(e) => setScheduleEditDraft((current) => ({ ...current, days: e.target.value }))} /></label>
               </div>
               <div className="schedule-check-row prominent-checks">
-                <label><input type="checkbox" checked={Boolean(scheduleEditDraft.materialOrdered)} onChange={(e) => setScheduleEditDraft((current) => ({ ...current, materialOrdered: e.target.checked }))} /> Material ordered</label>
-                <label><input type="checkbox" checked={Boolean(scheduleEditDraft.deliveryScheduled)} onChange={(e) => setScheduleEditDraft((current) => ({ ...current, deliveryScheduled: e.target.checked }))} /> Delivery scheduled</label>
+                <label className={scheduleEditDraft.materialOrdered ? "status-check done" : "status-check"}><input type="checkbox" checked={Boolean(scheduleEditDraft.materialOrdered)} onChange={(e) => setScheduleEditDraft((current) => ({ ...current, materialOrdered: e.target.checked }))} /> Material ordered</label>
+                <label className={scheduleEditDraft.deliveryScheduled ? "status-check done" : "status-check"}><input type="checkbox" checked={Boolean(scheduleEditDraft.deliveryScheduled)} onChange={(e) => setScheduleEditDraft((current) => ({ ...current, deliveryScheduled: e.target.checked }))} /> Delivery scheduled</label>
               </div>
               <label>Notes<textarea rows="4" value={scheduleEditDraft.note} onChange={(e) => setScheduleEditDraft((current) => ({ ...current, note: e.target.value }))} /></label>
               <div className="toolbar-buttons inline-actions right-actions">
