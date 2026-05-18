@@ -2561,3 +2561,19 @@ button:hover {
   border-color: rgba(134, 239, 172, 0.55);
   background: rgba(22, 101, 52, 0.35);
 }
+
+/* Calendar card status colors must override the generic calendar pill span color. */
+.calendar-job-pill .status-done {
+  color: #047857;
+  font-weight: 900;
+}
+.calendar-job-pill .status-needed {
+  color: #b91c1c;
+  font-weight: 900;
+}
+:root[data-theme="dark"] .calendar-job-pill .status-done {
+  color: #86efac;
+}
+:root[data-theme="dark"] .calendar-job-pill .status-needed {
+  color: #fecaca;
+}
